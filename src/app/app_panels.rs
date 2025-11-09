@@ -52,29 +52,54 @@ impl PartyApp {
                 self.input_devices = scan_input_devices(&self.options.pad_filter_type);
             }
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("❌ Quit").clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                let version_label = match self.needs_update {
-                    true => format!("v{} (Update Available)", env!("CARGO_PKG_VERSION")),
-                    false => format!("v{}", env!("CARGO_PKG_VERSION")),
-                };
-                ui.hyperlink_to(version_label, "https://github.com/wunnr/partydeck/releases");
+
+
+            let content_top_bar_left_scroll = |ui: &mut egui::Ui| {
+                ui.hyperlink_to("GitHub", "https://github.com/wunnr/partydeck");
                 ui.add(egui::Separator::default().vertical());
-                ui.hyperlink_to(
-                    "Licenses",
-                    "https://github.com/wunnr/partydeck/tree/main?tab=License-2-ov-file",
-                );
+                ui.hyperlink_to("Donate", "https://ko-fi.com/wunner");
                 ui.add(egui::Separator::default().vertical());
                 ui.hyperlink_to(
                     "Handlers",
                     "https://drive.proton.me/urls/D9HBKM18YR#zG8XC8yVy9WL",
                 );
                 ui.add(egui::Separator::default().vertical());
-                ui.hyperlink_to("Donate", "https://ko-fi.com/wunner");
+                ui.hyperlink_to(
+                    "Licenses",
+                    "https://github.com/wunnr/partydeck/tree/main?tab=License-2-ov-file",
+                );
                 ui.add(egui::Separator::default().vertical());
-                ui.hyperlink_to("GitHub", "https://github.com/wunnr/partydeck");
+
+                let version_label = match self.needs_update {
+                    true => format!("v{} (Update Available)", env!("CARGO_PKG_VERSION")),
+                    false => format!("v{}", env!("CARGO_PKG_VERSION")),
+                } + if !self.options.check_for_updates {" (NOT checking)"} else {""};
+                ui.hyperlink_to(version_label, "https://github.com/wunnr/partydeck/releases");
+                
+                if ui.button("❌ Quit").clicked() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            };
+
+            let mut mesure_ui = ui.new_child(
+                egui::UiBuilder::new()
+                .layout(egui::Layout::left_to_right(egui::Align::Center))
+                .max_rect(egui::Rect::from_min_size(ui.cursor().min, egui::vec2(f32::INFINITY,f32::INFINITY)))
+            );
+            content_top_bar_left_scroll(&mut mesure_ui);            
+                
+            ui.add_space((ui.available_width()-mesure_ui.min_rect().width()).max(0.0));
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                egui::ScrollArea::horizontal()
+                    .auto_shrink(true)
+                    .stick_to_right(true)
+                    .show(ui, |ui| {
+                    
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            content_top_bar_left_scroll(ui)
+                    });
+                });
             });
         });
     }

@@ -44,10 +44,15 @@ impl PartyApp {
         });
         ui.separator();
 
-        match self.settings_page {
-            SettingsPage::General => self.display_settings_general(ui),
-            SettingsPage::Gamescope => self.display_settings_gamescope(ui),
-        }
+        egui::ScrollArea::vertical()
+            .max_height(ui.available_height() - 30.0)
+            .auto_shrink(false)
+            .show(ui, |ui| {
+                match self.settings_page {
+                    SettingsPage::General => self.display_settings_general(ui),
+                    SettingsPage::Gamescope => self.display_settings_gamescope(ui),
+                }
+        });
 
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
             ui.horizontal(|ui| {
@@ -432,6 +437,12 @@ impl PartyApp {
     }
 
     pub fn display_settings_general(&mut self, ui: &mut Ui) {
+        let check_for_app_updates = ui.checkbox(&mut self.options.check_for_updates, "Check for partydeck updates");
+        if check_for_app_updates.hovered() {
+            self.infotext = "DEFAULT: Enabled\n\nWARNING: CONTACTS GITHUB's SERVERS ON EVERY LAUNCH\nMakes partydeck check online for updates durring each launch, and notfies user when avaliable.".to_string();
+        }
+
+        
         let force_sdl2_check = ui.checkbox(&mut self.options.force_sdl, "Force Steam Runtime SDL2");
         if force_sdl2_check.hovered() {
             self.infotext = "DEFAULT: Disabled\n\nForces games to use the version of SDL2 included in the Steam Runtime. Only works on native Linux games, may fix problematic game controller support (incorrect mappings) in some games, may break others. If unsure, leave this unchecked.".to_string();
