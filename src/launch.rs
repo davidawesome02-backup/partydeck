@@ -9,6 +9,11 @@ use crate::paths::*;
 use crate::profiles::{create_profile, create_profile_gamesave};
 use crate::util::*;
 
+use crate::layout_manager;
+// use layout-manager::partydeck_layout_manager;
+// mod crate::layout_manager::*;
+// use crate::src::layout_manager::*;
+
 pub fn setup_profiles(
     h: &Handler,
     instances: &Vec<Instance>,
@@ -72,7 +77,7 @@ pub fn launch_game(
             "splitscreen_kwin.js"
         };
 
-        kwin_dbus_start_script(PATH_RES.join(script))?;
+        layout_manager::kwin_dbus_start_script(PATH_RES.join(script))?;
     }
 
     let mut handles = Vec::new();
