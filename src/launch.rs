@@ -1,5 +1,8 @@
+use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
 
 use crate::app::PartyConfig;
 use crate::handler::*;
@@ -90,13 +93,22 @@ pub fn launch_game(
     print_launch_cmds(&new_cmds);
 
     if cfg.enable_kwin_script {
-        let script = if instances.len() == 2 && cfg.vertical_two_player {
-            "splitscreen_kwin_vertical.js"
+        let script;
+        if instances.len() == 2 && cfg.vertical_two_player {
+            script = PATH_RES.join("splitscreen_kwin_vertical.js");
+            if !&script.exists() {
+                let mut file = File::create(&script)?;
+                file.write_all(include_bytes!("../res/splitscreen_kwin_vertical.js"))?;
+            }
         } else {
-            "splitscreen_kwin.js"
+            script = PATH_RES.join("splitscreen_kwin.js");
+            if !&script.exists() {
+                let mut file = File::create(&script)?;
+                file.write_all(include_bytes!("../res/splitscreen_kwin.js"))?;
+            }
         };
 
-        layout_manager::kwin_dbus_start_script(PATH_RES.join(script))?;
+        layout_manager::kwin_dbus_start_script(script)?;
     }
 
     let mut handles = Vec::new();
