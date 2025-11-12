@@ -1,3 +1,5 @@
+use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -65,12 +67,22 @@ pub fn launch_game(
     print_launch_cmds(&new_cmds);
 
     if cfg.enable_kwin_script {
-        let script = match cfg.vertical_two_player {
-            true => "splitscreen_kwin_vertical.js",
-            false => "splitscreen_kwin.js",
+        let script;
+        if instances.len() == 2 && cfg.vertical_two_player {
+            script = PATH_RES.join("splitscreen_kwin_vertical.js");
+            if !&script.exists() {
+                let mut file = File::create(&script)?;
+                file.write_all(include_bytes!("../res/splitscreen_kwin_vertical.js"))?;
+            }
+        } else {
+            script = PATH_RES.join("splitscreen_kwin.js");
+            if !&script.exists() {
+                let mut file = File::create(&script)?;
+                file.write_all(include_bytes!("../res/splitscreen_kwin.js"))?;
+            }
         };
 
-        layout_manager::kwin_dbus_start_script(PATH_RES.join(script))?;
+        layout_manager::kwin_dbus_start_script(script)?;
     }
 
     let sleep_time = match h.pause_between_starts {
