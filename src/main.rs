@@ -18,6 +18,7 @@ use crate::profiles::remove_guest_profiles;
 use crate::util::*;
 
 fn main() -> eframe::Result {
+
     // Our sdl/multimonitor stuff essentially depends on us running through x11.
     unsafe {
         std::env::set_var("SDL_VIDEODRIVER", "x11");
@@ -122,6 +123,8 @@ fn main() -> eframe::Result {
         std::fs::write(PATH_PARTY.join("goldberg_data/steam_settings/auto_accept_invite.txt"), "").expect("failed to create auto_accept_invite.txt");
         std::fs::write(PATH_PARTY.join("goldberg_data/steam_settings/auto_send_invite.txt"), "").expect("failed to create auto_send_invite.txt");
     }
+
+    extract_all_embeded_executables();
 
     remove_guest_profiles().unwrap();
     clear_tmp().unwrap();
