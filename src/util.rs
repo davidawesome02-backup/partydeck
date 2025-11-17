@@ -335,15 +335,15 @@ pub fn extract_all_embeded_executables() {
     std::fs::create_dir_all(bin_dir)
         .expect("Failed to create extracted binaries directory");
 
-    let old_path = std::env::var("PATH").unwrap_or("".to_string());
-    unsafe {
-        std::env::set_var("PATH",format!("{}:{}",bin_dir.display(),old_path));
-    }
-
     #[cfg(HAS_RIVER_DATA)]
     let _ = extract_embeded_executable(bin_dir.join("river"), include_bytes!(env!("RIVER_DATA_PATH")));
     #[cfg(HAS_GAMESCOPE_DATA)]
     let _ = extract_embeded_executable(bin_dir.join("gamescope"), include_bytes!(env!("GAMESCOPE_DATA_PATH")));
+    #[cfg(HAS_GAMESCOPEREAPER_DATA)]
+    let _ = extract_embeded_executable(bin_dir.join("gamescopereaper"), include_bytes!(env!("GAMESCOPEREAPER_DATA_PATH")));
+
+    let _ = extract_embeded_executable(bin_dir.join("splitscreen_kwin_vertical.js"), include_bytes!("../res/splitscreen_kwin_vertical.js"));
+    let _ = extract_embeded_executable(bin_dir.join("splitscreen_kwin.js"), include_bytes!("../res/splitscreen_kwin.js"));
 }
 
 // Below *MAY* be dead code depending on the features enabled

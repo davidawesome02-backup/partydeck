@@ -59,16 +59,9 @@ pub static BIN_UMU_RUN: LazyLock<PathBuf> = LazyLock::new(|| {
     bin.join("umu-run")
 });
 
-pub static BIN_GSC_KBM: LazyLock<PathBuf> = LazyLock::new(|| {
-    let bin_candidates = [PathBuf::from("/usr/bin"), PathBuf::from("/usr/local/bin")];
 
-    for candidate in &bin_candidates {
-        let bin = candidate.join("gamescope-kbm");
-        if bin.exists() {
-            return bin;
-        }
-    }
-
-    let bin = env::current_exe().unwrap().parent().unwrap().join("bin");
-    bin.join("gamescope-kbm")
+pub static MODIFIED_PATH_BUNDLED_EXECUTABLES: LazyLock<String> = LazyLock::new(|| {
+    let bin_dir = &PATH_PARTY.join("extracted_bin");
+    let old_path = std::env::var("PATH").unwrap_or("".to_string());
+    return format!("{}:{}",bin_dir.display(),old_path);
 });

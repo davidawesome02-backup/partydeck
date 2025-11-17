@@ -442,6 +442,11 @@ impl PartyApp {
             self.infotext = "DEFAULT: Enabled\n\nWARNING: CONTACTS GITHUB's SERVERS ON EVERY LAUNCH\nMakes partydeck check online for updates durring each launch, and notfies user when avaliable.".to_string();
         }
 
+        let use_embeded_executables = ui.checkbox(&mut self.options.use_embed_executables, "Use embeded executables");
+        if use_embeded_executables.hovered() {
+            self.infotext = "DEFAULT: Enabled\n\nUses the executables included while compiling partydeck, minimzing local system dependancies. Disable to use default programs in PATH".to_string();
+        }
+
         
         let force_sdl2_check = ui.checkbox(&mut self.options.force_sdl, "Force Steam Runtime SDL2");
         if force_sdl2_check.hovered() {

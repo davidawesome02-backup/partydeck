@@ -1,5 +1,3 @@
-use std::fs::File;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -94,18 +92,20 @@ pub fn launch_game(
 
     if cfg.enable_kwin_script {
         let script;
+        
+        let mut search_path_obj = search_path::SearchPath::new("PATH")?;
+        if cfg.use_embed_executables {
+            search_path_obj.append(PATH_PARTY.join("extracted_bin"));
+        }
+
         if instances.len() == 2 && cfg.vertical_two_player {
-            script = PATH_RES.join("splitscreen_kwin_vertical.js");
-            if !&script.exists() {
-                let mut file = File::create(&script)?;
-                file.write_all(include_bytes!("../res/splitscreen_kwin_vertical.js"))?;
-            }
+            script = search_path_obj
+                .find_file(Path::new("splitscreen_kwin_vertical.js"))
+                .expect("Failed to locate kde splitscreen script in path");
         } else {
-            script = PATH_RES.join("splitscreen_kwin.js");
-            if !&script.exists() {
-                let mut file = File::create(&script)?;
-                file.write_all(include_bytes!("../res/splitscreen_kwin.js"))?;
-            }
+            script = search_path_obj
+                .find_file(Path::new("splitscreen_kwin.js"))
+                .expect("Failed to locate kde splitscreen script in path");
         };
 
         layout_manager::kwin_dbus_start_script(script)?;
@@ -172,11 +172,8 @@ pub fn launch_cmds(
     let win = h.win();
     let exec = Path::new(&h.exec);
     let runtime = h.runtime.as_str();
-    let gamescope = match cfg.kbm_support {
-        true => BIN_GSC_KBM.as_path(),
-        false => Path::new("gamescope"),
-    };
-    // let gamescope = Path::new("gamescope"); // DAVID FIX
+
+    let gamescope= Path::new("gamescope");
 
     if (runtime == "scout"
         && !PATH_STEAM
@@ -214,6 +211,10 @@ pub fn launch_cmds(
             });
 
         let cmd = &mut cmds[i];
+
+        if cfg.use_embed_executables {
+            cmd.env("PATH", MODIFIED_PATH_BUNDLED_EXECUTABLES.as_str());
+        }
 
         cmd.env("SDL_JOYSTICK_HIDAPI", "0");
         cmd.env("ENABLE_GAMESCOPE_WSI", "0");
