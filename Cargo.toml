@@ -12,9 +12,9 @@ embed_river = []
 embed_gamescope = []
 embed_gbe = []
 build_all = ["build_river", "build_gamescope", "build_gbe"]
-build_river = ["embed_river"]
-build_gamescope = ["embed_gamescope"]
-build_gbe = ["embed_gbe"]
+build_river = []
+build_gamescope = []
+build_gbe = []
 
 [dependencies]
 dialog = "0.3.0"

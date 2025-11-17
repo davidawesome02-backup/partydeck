@@ -33,6 +33,7 @@ pub struct PartyConfig {
     #[serde(default)]
     pub check_for_updates: bool,
     pub nested_compositor: Option<String>,
+    pub use_embed_executables: bool,
 }
 
 impl Default for PartyConfig {
@@ -53,6 +54,7 @@ impl Default for PartyConfig {
             disable_mount_gamedirs: false,
             check_for_updates: true,
             nested_compositor: None,
+            use_embed_executables: true,
         }
     }
 }
