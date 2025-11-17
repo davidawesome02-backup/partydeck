@@ -18,6 +18,9 @@ use crate::profiles::remove_guest_profiles;
 use crate::util::*;
 
 fn main() -> eframe::Result {
+    // println!("Test: {}", RIVER_DATA_BIN.iter().map(|b| format!("{:02x}",b)).collect::<String>());
+
+
     // Our sdl/multimonitor stuff essentially depends on us running through x11.
     unsafe {
         std::env::set_var("SDL_VIDEODRIVER", "x11");
@@ -116,6 +119,7 @@ fn main() -> eframe::Result {
         .expect("Failed to create handlers directory");
     std::fs::create_dir_all(PATH_PARTY.join("profiles"))
         .expect("Failed to create profiles directory");
+    extract_all_embeded_executables();
 
     remove_guest_profiles().unwrap();
     clear_tmp().unwrap();

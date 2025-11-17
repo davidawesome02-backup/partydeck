@@ -8,6 +8,7 @@ use std::error::Error;
 use std::io::Read;
 use std::os::fd::AsFd;
 use std::os::fd::IntoRawFd;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -16,7 +17,7 @@ use nix::unistd;
 use nix::fcntl;
 use std::os::fd::FromRawFd;
 use nix::unistd::Pid;
-use std::env;
+use std::{env, fs};
 
 pub fn msg(title: &str, contents: &str) {
     let _ = dialog::Message::new(contents).title(title).show();
@@ -323,4 +324,36 @@ pub fn spawn_comp_and_get_display(comp_executable: &str, primary_monitor: Monito
     println!("Got DISPLAY_WAYLAND from COMP: {} and DISPLAY: {}, with resolution: {}x{}", way_disp, x11_disp, monitor_width, monitor_height);
     
     return Some((way_disp.to_string(), x11_disp.to_string(), main_monitor, child_pid));
+}
+
+
+
+
+
+pub fn extract_all_embeded_executables() {
+    let bin_dir = &PATH_PARTY.join("extracted_bin");
+    std::fs::create_dir_all(bin_dir)
+        .expect("Failed to create extracted binaries directory");
+
+    let old_path = std::env::var("PATH").unwrap_or("".to_string());
+    unsafe {
+        std::env::set_var("PATH",format!("{}:{}",bin_dir.display(),old_path));
+    }
+
+    #[cfg(HAS_RIVER_DATA)]
+    let _ = extract_embeded_executable(bin_dir.join("river"), include_bytes!(env!("RIVER_DATA_PATH")));
+    #[cfg(HAS_GAMESCOPE_DATA)]
+    let _ = extract_embeded_executable(bin_dir.join("gamescope"), include_bytes!(env!("GAMESCOPE_DATA_PATH")));
+}
+
+// Below *MAY* be dead code depending on the features enabled
+#[allow(dead_code)]
+pub fn extract_embeded_executable(path: PathBuf, contents: &'static [u8]) -> Result<(),Box<dyn Error>> {
+    if std::fs::exists(&path)? {return Ok(())}; // Early return if already extracted
+    let _ = std::fs::write(&path, contents);
+    let metadata = std::fs::metadata(&path)?;
+    let mut perms = metadata.permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&path, perms)?;
+    Ok(())
 }
