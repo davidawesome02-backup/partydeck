@@ -366,6 +366,8 @@ pub fn extract_all_embeded_executables() {
     let _ = extract_embeded_executable(bin_dir.join("gamescope"), include_bytes!(env!("GAMESCOPE_DATA_PATH")));
     #[cfg(HAS_GAMESCOPEREAPER_DATA)]
     let _ = extract_embeded_executable(bin_dir.join("gamescopereaper"), include_bytes!(env!("GAMESCOPEREAPER_DATA_PATH")));
+    #[cfg(HAS_BWRAP_DATA)]
+    let _ = extract_embeded_executable(bin_dir.join("bwrap"), include_bytes!(env!("BWRAP_DATA_PATH")));
 
     let _ = extract_embeded_executable(bin_dir.join("splitscreen_kwin_vertical.js"), include_bytes!("../res/splitscreen_kwin_vertical.js"));
     let _ = extract_embeded_executable(bin_dir.join("splitscreen_kwin.js"), include_bytes!("../res/splitscreen_kwin.js"));

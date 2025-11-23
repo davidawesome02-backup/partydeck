@@ -7,14 +7,16 @@ build="build.rs"
 [features]
 default=["minimal"]
 minimal = []
-embed_all = ["embed_river","embed_gamescope","embed_gbe"]
+embed_all = ["embed_river","embed_gamescope","embed_gbe","embed_bwrap"]
 embed_river = []
 embed_gamescope = []
 embed_gbe = []
-build_all = ["build_river", "build_gamescope", "build_gbe"]
+embed_bwrap = []
+build_all = ["build_river", "build_gamescope", "build_gbe", "build_bwrap"]
 build_river = []
 build_gamescope = []
 build_gbe = []
+build_bwrap = []
 
 [dependencies]
 dialog = "0.3.0"

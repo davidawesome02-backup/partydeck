@@ -9,7 +9,7 @@ macro_rules! p {
 }
 
 fn main() {
-    p!("Build running");
+    p!("Pre-build running");
     let main_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let local_binaries = main_dir.join("deps").join("built");
     std::fs::create_dir_all(&local_binaries).unwrap();
@@ -61,12 +61,16 @@ fn main() {
     if std::env::var("CARGO_FEATURE_BUILD_GBE").is_ok() {
         p!("GBE BUILD NOT IMPLEMENTED YET!");
     }
+    if std::env::var("CARGO_FEATURE_BUILD_BWRAP").is_ok() {
+        p!("BWRAP BUILD NOT IMPLEMENTED!");
+    }
 
 
     // Mark that these features may be used in the main program
     println!("cargo::rustc-check-cfg=cfg(HAS_RIVER_DATA)");
     println!("cargo::rustc-check-cfg=cfg(HAS_GAMESCOPE_DATA)");
     println!("cargo::rustc-check-cfg=cfg(HAS_GAMESCOPEREAPER_DATA)");
+    println!("cargo::rustc-check-cfg=cfg(HAS_BWRAP_DATA)");
 
     if std::env::var("CARGO_FEATURE_EMBED_RIVER").is_ok() {
         p!("RIVER EMBEDED");
@@ -93,4 +97,14 @@ fn main() {
         // Changed reciently skipping!
         p!("GBE EMBED NOT IMPLEMENTED YET")
     }
+    if std::env::var("CARGO_FEATURE_EMBED_BWRAP").is_ok() {
+        p!("BWRAP EMBEDED");
+
+        let bwrap_path = path_search.find_file(&PathBuf::from("bwrap")).expect("Failed to find bwrap");
+
+        println!("cargo::rustc-env=BWRAP_DATA_PATH={}", bwrap_path.display());
+        println!("cargo::rustc-cfg=HAS_BWRAP_DATA");
+    }
+
+    p!("Pre-build finished");
 }
