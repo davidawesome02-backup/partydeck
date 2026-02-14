@@ -16,7 +16,15 @@ use crate::paths::PATH_PARTY;
 use crate::profiles::remove_guest_profiles;
 use crate::util::*;
 
+use gamescope_webrtc;
+
 fn main() -> eframe::Result {
+    // gamescope_webrtc::test();
+    let context= gamescope_webrtc::start_webrtc_stream();
+    loop {
+        println!("{:?}",gamescope_webrtc::check_webrtc_stream_codes(context));
+    }
+
     // Our sdl/multimonitor stuff essentially depends on us running through x11.
     unsafe {
         std::env::set_var("SDL_VIDEODRIVER", "x11");
