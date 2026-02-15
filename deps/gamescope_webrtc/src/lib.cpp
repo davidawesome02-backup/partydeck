@@ -9,7 +9,9 @@ static gamescopeWebrtcCtx* int_gamescopeWebrtc_INIT(bool kbm, bool ctrl) {
 
     allocated_ctx->result_err = 0;
 
-    allocated_ctx->kbm_path = setup_uinput_keyboard_mouse(internal_ctx).c_str();
+    internal_ctx->uinput_kbm_dev_path = setup_uinput_keyboard_mouse(internal_ctx);
+    allocated_ctx->kbm_path = internal_ctx->uinput_kbm_dev_path.c_str();
+    printf("Returned kbm path: %s\n\n\n", allocated_ctx->kbm_path);
     // std::string ctrl_path = setup_uinput_controler(internal_ctx);
 
 
@@ -58,7 +60,11 @@ static void int_gamescopeWebrtc_check_webrtc(gamescopeWebrtcCtx* allocated_ctx) 
 
 static void int_gamescopeWebrtc_start_recording(gamescopeWebrtcCtx* allocated_ctx, int gamescope_pid) {
     stateData* internal_ctx = (stateData*)allocated_ctx->opaque_internal_ctx;
+    printf("STARTING RECORDING!!!!\n\n\n\n\n");
 
+
+    prepare_recording(internal_ctx, gamescope_pid);
+    start_recording(internal_ctx);
 }
 
 

@@ -350,6 +350,7 @@ impl PartyApp {
                                 monitor: 0,
                                 width: 0,
                                 height: 0,
+                                webrtc_instance: None,
                             });
                         }
                     }

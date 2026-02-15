@@ -134,6 +134,21 @@ impl InputDevice {
     }
 }
 
+pub fn create_input_device_from_path(path: String) -> Option<InputDevice> {
+    println!("PATH EXISTS: {}", std::path::Path::new(&path).exists());
+    if let Ok(raw_dev) = Device::open(&path) {
+
+        return Some(InputDevice {
+            path: path,
+            dev: raw_dev,
+            enabled: true,
+            device_type: DeviceType::Keyboard,
+            has_button_held: false,
+        })
+    }
+    None
+}
+
 pub fn scan_input_devices(filter: &PadFilterType) -> Vec<InputDevice> {
     let mut pads: Vec<InputDevice> = Vec::new();
     for dev in evdev::enumerate() {

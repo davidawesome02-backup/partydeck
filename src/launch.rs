@@ -78,8 +78,7 @@ pub fn launch_game(
 
     let mut handles = Vec::new();
 
-    let mut i = 0;
-    for mut cmd in new_cmds {
+    for (idx, mut cmd) in new_cmds.into_iter().enumerate() {
         if let Some(disp) = &way_display_name {
             cmd.env("WAYLAND_DISPLAY", disp);
             // cmd.env("XDG_SESSION_TYPE","WAYLAND");
@@ -89,13 +88,23 @@ pub fn launch_game(
             cmd.env("DISPLAY", disp);
         }
         let handle = cmd.spawn().expect("Game argument error");
-        wait_processes.insert(Pid::from_raw((handle.id()) as i32));
+        let handle_pid = handle.id();
+        wait_processes.insert(Pid::from_raw(handle_pid as i32));
         handles.push(handle);
 
-        if i < instances.len() - 1 {
+
+         if let Some(webrtc_ctx) = instances[idx].webrtc_instance {
+            unsafe {
+                gamescope_webrtc::start_webrtc_streaming_thread(
+                    webrtc_ctx as *mut gamescope_webrtc::GamescopeWebrtcCtx,
+                    handle_pid
+                );
+            }
+        }
+
+        if idx < instances.len() - 1 {
             std::thread::sleep(std::time::Duration::from_secs_f64(sleep_time));
         }
-        i += 1;
     }
 
     loop {

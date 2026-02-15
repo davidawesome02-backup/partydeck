@@ -87,6 +87,7 @@ typedef struct {
         AVCodecContext *encCtx;
 
         int uinput_kbm_fd;
+        std::string uinput_kbm_dev_path;
         int uinput_crl_fd;
 
         std::shared_ptr<rtc::WebSocket> connection_open_socket;

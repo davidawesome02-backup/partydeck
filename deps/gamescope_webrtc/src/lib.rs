@@ -4,7 +4,7 @@ use std::os::raw::{c_char, c_int, c_void};
 use std::thread;
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[allow(non_snake_case)]
 pub struct GamescopeWebrtcCtx {
     pub crl_path: *const c_char,
@@ -66,14 +66,26 @@ pub fn check_webrtc_stream_codes(context: *mut GamescopeWebrtcCtx) -> Option<Str
     }
 }
 
+pub fn check_webrtc_stream_created_devices(context: *mut GamescopeWebrtcCtx) -> Option<String> {
+    unsafe {
+        if !(*context).kbm_path.is_null() {
+            if let Ok(a) = CStr::from_ptr((*context).kbm_path).to_str() {
+                return Some(a.to_string());
+            }
+        }
+        None
+    }
+}
 
 
-pub fn start_webrtc_streaming_thread(context: *mut GamescopeWebrtcCtx, pid: i32) -> thread::JoinHandle<()> {
+
+pub fn start_webrtc_streaming_thread(context: *mut GamescopeWebrtcCtx, pid: u32) -> thread::JoinHandle<()> {
     let ctx_adr = context as usize;
     thread::spawn(move || {
         unsafe {
+            std::thread::sleep(std::time::Duration::from_secs_f64(5.0));
             let context = ctx_adr as *mut GamescopeWebrtcCtx;
-            gamescopeWebrtc_start_recording(context, pid);
+            gamescopeWebrtc_start_recording(context, pid as i32);
         }
     })
 }

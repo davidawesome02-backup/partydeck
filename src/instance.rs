@@ -1,3 +1,5 @@
+use gamescope_webrtc::GamescopeWebrtcCtx;
+
 use crate::monitor::Monitor;
 use crate::app::PartyConfig;
 use crate::profiles::GUEST_NAMES;
@@ -10,6 +12,7 @@ pub struct Instance {
     pub monitor: usize,
     pub width: u32,
     pub height: u32,
+    pub webrtc_instance: Option<usize> // BE CAREFULL usize here is a casted pointer!!
 }
 
 pub fn set_instance_resolutions(
