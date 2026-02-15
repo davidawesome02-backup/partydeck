@@ -29,6 +29,20 @@ pub enum SettingsPage {
     Gamescope,
 }
 
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisplayProfile {
+    pub prof_name: String,
+    pub display_idx: usize, // Index 0 is the unused ones.
+    pub profile_display_idx: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Display {
+    pub profile_list: Vec<DisplayProfile>,
+    pub display_name: String,
+}
+
 pub struct PartyApp {
     pub installed_steamapps: Vec<Option<steamlocate::App>>,
     pub needs_update: bool,
@@ -52,6 +66,8 @@ pub struct PartyApp {
     pub loading_since: Option<std::time::Instant>,
     #[allow(dead_code)]
     pub task: Option<std::thread::JoinHandle<()>>,
+
+    pub testing_displays: Vec<Display>,
 }
 
 macro_rules! cur_handler {
@@ -72,7 +88,7 @@ impl PartyApp {
             Some(_) => MenuPage::Instances,
             None => MenuPage::Home,
         };
-
+        let mut i=0;
         let mut app = Self {
             installed_steamapps: get_installed_steamapps(),
             needs_update: false,
@@ -92,6 +108,27 @@ impl PartyApp {
             loading_msg: None,
             loading_since: None,
             task: None,
+            testing_displays: vec![
+                vec!["testa","testab"],
+                vec!["testb"],
+                vec!["testc"],
+                vec!["testd","testf","testg"],
+                vec!["teste"],
+            ].into_iter()
+            .map(|v| {
+                i+=1;
+                Display { 
+                    profile_list: v.into_iter().map(|str| {
+                        DisplayProfile{
+                            prof_name: str.to_string(),
+                            display_idx: 0,
+                            profile_display_idx: 0,
+                        }
+                    }).collect(), 
+                    display_name: format!("Display {}", i),
+                }
+            })
+            .collect(),
         };
 
         if app.options.check_for_updates {
@@ -99,6 +136,7 @@ impl PartyApp {
                 app.needs_update = check_for_partydeck_update();
             });
         }
+
 
         app
     }

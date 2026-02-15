@@ -10,6 +10,7 @@ use crate::monitor::get_monitors_errorless;
 use dialog::DialogBox;
 use eframe::egui::RichText;
 use eframe::egui::{self, Ui};
+use egui_extras::StripBuilder;
 use rfd::FileDialog;
 use std::path::PathBuf;
 
@@ -371,117 +372,193 @@ impl PartyApp {
     }
 
     pub fn display_page_instances(&mut self, ui: &mut Ui) {
-        ui.heading("Instances");
+
+        ui.heading("Game instances");
         ui.separator();
 
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::Image::new(egui::include_image!("../../res/BTN_SOUTH.png")).max_height(12.0),
-            );
-            ui.label("[Z]");
-            ui.add(
-                egui::Image::new(egui::include_image!("../../res/MOUSE_RIGHT.png"))
-                    .max_height(12.0),
-            );
-            let add_text = match self.instance_add_dev {
-                None => "Add New Instance",
-                Some(i) => &format!("Add to Instance {}", i + 1),
-            };
-            ui.label(add_text);
+        egui::TopBottomPanel::bottom("bottom_pannel_unsorted_games")
+            .resizable(false)
+            .exact_height(100.0)
+            .show_inside(ui, |ui| {
+                // ui.button("hii");
+                ui.label("Unused profiles")
+            });
 
-            ui.add(egui::Separator::default().vertical());
 
-            ui.add(
-                egui::Image::new(egui::include_image!("../../res/BTN_EAST.png")).max_height(12.0),
-            );
-            ui.label("[X]");
-            let remove_text = match self.instance_add_dev {
-                None => "Remove",
-                Some(_) => "Cancel",
-            };
-            ui.label(remove_text);
+        ui.horizontal_top(|ui| {
+            egui::ScrollArea::both().show(ui, |ui| {
+                ui.set_height(ui.available_height());
 
-            ui.add(egui::Separator::default().vertical());
+                for (col_idx, display_column) in self.testing_displays.clone().into_iter().enumerate() {
+                    if col_idx == 0 {
+                        continue;
+                    }
+                    let frame: egui::Frame = egui::Frame::group(ui.style())
+                        .inner_margin(0);
+
+                    frame.show(ui, |ui| {
+                        let visual_data = ui.visuals_mut();
+                        let old_visual_data = visual_data.widgets.clone(); // Reset dnd zone disabling colors may not be nessisary.
+                        visual_data.widgets.inactive.bg_fill = egui::Color32::TRANSPARENT; // DND zone disable colors
+                        visual_data.widgets.hovered.bg_fill  = egui::Color32::TRANSPARENT; // DND zone disable colors
+                        visual_data.widgets.active.bg_fill   = egui::Color32::TRANSPARENT; // DND zone disable colors
+                        let (_, dropped_payload) = ui.dnd_drop_zone::<super::app::DisplayProfile, ()>(frame, |ui| {
+                            ui.visuals_mut().widgets = old_visual_data; // Reset dnd zone disabling colors may not be nessisary.
+                            ui.set_min_height(100.0);
+                            ui.set_width(150.0);
+
+
+                            ui.vertical(|ui: &mut Ui| {
+                                ui.label(display_column.display_name);
+                                for (row_idx, mut instan) in display_column.profile_list.into_iter().enumerate() {
+                                    
+                                    instan.display_idx = col_idx;
+                                    instan.profile_display_idx = row_idx;
+                                    
+
+                                    ui.dnd_drag_source(ui.next_auto_id(), instan.clone(), |ui| {
+                                        ui.button(instan.prof_name).on_hover_text("HI HIH I");
+                                    });
+                                }
+                            });
+                        });
+
+                        if let Some(payload_drop) = dropped_payload {
+                            let item = payload_drop;
+                            let asd_removed = self.testing_displays[item.display_idx].profile_list.remove(item.profile_display_idx);
+                            self.testing_displays[col_idx].profile_list.push(asd_removed);
+
+                        }
+                    });
+                    
+                }
+
+                ui.horizontal_centered(|ui| {
+                    ui.style_mut().override_text_style = Some(egui::TextStyle::Heading);
+                    if ui.button("➕").clicked() {
+                        println!("ADD NEW INSTANCE")
+                    }
+                    
+                    ui.style_mut().override_text_style = None;
+                });
+                ui.add_space(10.0);
+            });
         });
+        ui.add_space(20.0);
+        
+        
 
-        ui.separator();
+        // ui.heading("Instances");
+        // ui.separator();
 
-        let mut devices_to_remove: Vec<(usize, usize)> = Vec::new();
-        for (i, instance) in &mut self.instances.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                ui.label(format!("{}", i + 1));
+        // ui.horizontal(|ui| {
+        //     ui.add(
+        //         egui::Image::new(egui::include_image!("../../res/BTN_SOUTH.png")).max_height(12.0),
+        //     );
+        //     ui.label("[Z]");
+        //     ui.add(
+        //         egui::Image::new(egui::include_image!("../../res/MOUSE_RIGHT.png"))
+        //             .max_height(12.0),
+        //     );
+        //     let add_text = match self.instance_add_dev {
+        //         None => "Add New Instance",
+        //         Some(i) => &format!("Add to Instance {}", i + 1),
+        //     };
+        //     ui.label(add_text);
 
-                ui.label("👤");
-                egui::ComboBox::from_id_salt(format!("{i}")).show_index(
-                    ui,
-                    &mut instance.profselection,
-                    self.profiles.len(),
-                    |i| self.profiles[i].clone(),
-                );
+        //     ui.add(egui::Separator::default().vertical());
 
-                if self.options.gamescope_sdl_backend {
-                    ui.label("🖵");
-                    egui::ComboBox::from_id_salt(format!("monitors{i}")).show_index(
-                        ui,
-                        &mut instance.monitor,
-                        self.monitors.len(),
-                        |i| self.monitors[i].name(),
-                    );
-                }
+        //     ui.add(
+        //         egui::Image::new(egui::include_image!("../../res/BTN_EAST.png")).max_height(12.0),
+        //     );
+        //     ui.label("[X]");
+        //     let remove_text = match self.instance_add_dev {
+        //         None => "Remove",
+        //         Some(_) => "Cancel",
+        //     };
+        //     ui.label(remove_text);
 
-                if self.instance_add_dev == None {
-                    let invitebtn = ui.add(
-                        egui::Button::image_and_text(egui::include_image!("../../res/BTN_NORTH.png"), "[A] Invite New Device")
-                    );
-                    if invitebtn.clicked() {
-                        self.instance_add_dev = Some(i);
-                    }
-                } else if self.instance_add_dev == Some(i) {
-                    ui.label("Adding new device...");
-                    if ui.button("🗙").clicked() {
-                        self.instance_add_dev = None;
-                    }
-                }
-            });
-            for &dev in instance.devices.iter() {
-                let mut dev_text = RichText::new(format!(
-                    "{} {}",
-                    self.input_devices[dev].emoji(),
-                    self.input_devices[dev].fancyname()
-                ));
+        //     ui.add(egui::Separator::default().vertical());
+        // });
 
-                if self.input_devices[dev].has_button_held() {
-                    dev_text = dev_text.strong();
-                }
+        // ui.separator();
 
-                ui.horizontal(|ui| {
-                    ui.label("    ");
-                    ui.label(dev_text);
-                    if ui.button("🗑").clicked() {
-                        devices_to_remove.push((i, dev));
-                    }
-                });
-            }
-        }
+        // let mut devices_to_remove: Vec<(usize, usize)> = Vec::new();
+        // for (i, instance) in &mut self.instances.iter_mut().enumerate() {
+        //     ui.horizontal(|ui| {
+        //         ui.label(format!("{}", i + 1));
 
-        for (i, d) in devices_to_remove {
-            self.remove_device_instance(i, d);
-        }
+        //         ui.label("👤");
+        //         egui::ComboBox::from_id_salt(format!("{i}")).show_index(
+        //             ui,
+        //             &mut instance.profselection,
+        //             self.profiles.len(),
+        //             |i| self.profiles[i].clone(),
+        //         );
 
-        if self.instances.len() > 0 {
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::Image::new(egui::include_image!("../../res/BTN_START.png"))
-                            .max_height(16.0),
-                    );
-                    if ui.button("Start").clicked() {
-                        self.prepare_game_launch();
-                    }
-                });
-                ui.separator();
-            });
-        }
+        //         if self.options.gamescope_sdl_backend {
+        //             ui.label("🖵");
+        //             egui::ComboBox::from_id_salt(format!("monitors{i}")).show_index(
+        //                 ui,
+        //                 &mut instance.monitor,
+        //                 self.monitors.len(),
+        //                 |i| self.monitors[i].name(),
+        //             );
+        //         }
+
+        //         if self.instance_add_dev == None {
+        //             let invitebtn = ui.add(
+        //                 egui::Button::image_and_text(egui::include_image!("../../res/BTN_NORTH.png"), "[A] Invite New Device")
+        //             );
+        //             if invitebtn.clicked() {
+        //                 self.instance_add_dev = Some(i);
+        //             }
+        //         } else if self.instance_add_dev == Some(i) {
+        //             ui.label("Adding new device...");
+        //             if ui.button("🗙").clicked() {
+        //                 self.instance_add_dev = None;
+        //             }
+        //         }
+        //     });
+        //     for &dev in instance.devices.iter() {
+        //         let mut dev_text = RichText::new(format!(
+        //             "{} {}",
+        //             self.input_devices[dev].emoji(),
+        //             self.input_devices[dev].fancyname()
+        //         ));
+
+        //         if self.input_devices[dev].has_button_held() {
+        //             dev_text = dev_text.strong();
+        //         }
+
+        //         ui.horizontal(|ui| {
+        //             ui.label("    ");
+        //             ui.label(dev_text);
+        //             if ui.button("🗑").clicked() {
+        //                 devices_to_remove.push((i, dev));
+        //             }
+        //         });
+        //     }
+        // }
+
+        // for (i, d) in devices_to_remove {
+        //     self.remove_device_instance(i, d);
+        // }
+
+        // if self.instances.len() > 0 {
+        //     ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+        //         ui.horizontal(|ui| {
+        //             ui.add(
+        //                 egui::Image::new(egui::include_image!("../../res/BTN_START.png"))
+        //                     .max_height(16.0),
+        //             );
+        //             if ui.button("Start").clicked() {
+        //                 self.prepare_game_launch();
+        //             }
+        //         });
+        //         ui.separator();
+        //     });
+        // }
     }
 
     pub fn display_settings_general(&mut self, ui: &mut Ui) {
