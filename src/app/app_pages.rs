@@ -8,7 +8,7 @@ use crate::util::*;
 use crate::monitor::get_monitors_errorless;
 
 use dialog::DialogBox;
-use eframe::egui::RichText;
+use eframe::egui::{RichText, vec2};
 use eframe::egui::{self, Ui};
 use egui_extras::StripBuilder;
 use rfd::FileDialog;
@@ -370,9 +370,9 @@ impl PartyApp {
                 });
             });
     }
-
+/*
     pub fn display_page_instances(&mut self, ui: &mut Ui) {
-        /*
+        
         ui.heading("Game instances");
         ui.separator();
 
@@ -381,7 +381,6 @@ impl PartyApp {
             .resizable(false)
             .exact_height(100.0)
             .show_inside(ui, |ui| {
-                // ui.button("hii");
 
                 let framea: egui::Frame = egui::Frame::group(ui.style())
                         .inner_margin(0);
@@ -389,8 +388,10 @@ impl PartyApp {
                     framea.show(ui, |ui| {
                         ui.set_height(ui.available_height());
                         ui.set_width(ui.available_width());
+
                 ui.label("Unused profiles");
                 egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
                     let data_arr = self.testing_displays[0].profile_list.clone();
 
                     
@@ -402,7 +403,7 @@ impl PartyApp {
                         let (_, dropped_payload) = ui.dnd_drop_zone::<super::app::DisplayProfile, ()>(framea, |ui| {
                             ui.visuals_mut().widgets = old_visual_data; // Reset dnd zone disabling colors may not be nessisary.
                             ui.set_min_height(100.0);
-                            ui.set_width(150.0);
+                            ui.set_width(ui.available_width());
 
 
                             ui.vertical(|ui: &mut Ui| {
@@ -427,8 +428,6 @@ impl PartyApp {
                         }
 
                     });
-
-                    // for 
                 })
             });
 
@@ -494,7 +493,7 @@ impl PartyApp {
         });
         ui.add_space(20.0);
         
-         */
+        / *  * /
 
         ui.heading("Instances");
         ui.separator();
@@ -612,6 +611,7 @@ impl PartyApp {
 
 
         ui.separator();
+        
 
         let mut devices_to_remove: Vec<(usize, usize)> = Vec::new();
         for (i, instance) in &mut self.instances.iter_mut().enumerate() {
@@ -690,6 +690,301 @@ impl PartyApp {
             });
         }
     }
+
+    */
+
+
+    #[doc(alias = "drag and drop")]
+    pub fn dnd_drag_source_cust<Payload, R>(
+        &mut self,
+        selfU: &mut egui::Ui,
+        id: egui::Id,
+        payload: Payload,
+        add_contents: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> egui::InnerResponse<R>
+    where
+        Payload: std::any::Any + Send + Sync,
+    {
+        let is_being_dragged = selfU.ctx().is_being_dragged(id);
+
+        if is_being_dragged {
+            egui::DragAndDrop::set_payload(selfU.ctx(), payload);
+
+            // Paint the body to a new layer:
+            let layer_id = egui::LayerId::new(egui::Order::Tooltip, id);
+            let egui::InnerResponse { inner, response } =
+                selfU.scope_builder(egui::UiBuilder::new().layer_id(layer_id), add_contents);
+
+            // Now we move the visuals of the body to where the mouse is.
+            // Normally you need to decide a location for a widget first,
+            // because otherwise that widget cannot interact with the mouse.
+            // However, a dragged component cannot be interacted with anyway
+            // (anything with `Order::Tooltip` always gets an empty [`Response`])
+            // So this is fine!
+
+            if let Some(pointer_pos) = selfU.ctx().pointer_interact_pos() {
+                let delta = pointer_pos - response.rect.left_center() - vec2(10.0, 0.0); // Manual correction factor
+                selfU.ctx()
+                    .transform_layer_shapes(layer_id, egui::emath::TSTransform::from_translation(delta));
+            }
+
+            egui::InnerResponse::new(inner, response)
+        } else {
+            let egui::InnerResponse { inner, response } = selfU.scope(add_contents);
+
+            egui::InnerResponse::new(inner, response)
+        }
+    }
+
+    pub fn display_page_instances(&mut self, ui: &mut Ui) {
+        ui.heading("Game instances");
+        ui.separator();
+
+        
+        egui::TopBottomPanel::bottom(ui.next_auto_id())
+            .resizable(false)
+            .exact_height(100.0)
+            .show_inside(ui, |ui| {
+
+            let dnd_frame: egui::Frame = egui::Frame::group(ui.style())
+                    .inner_margin(0);
+
+            dnd_frame.show(ui, |ui| {
+                ui.set_height(ui.available_height());
+                ui.set_width(ui.available_width());
+
+                ui.label("Unused profiles");
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    let data_arr = self.testing_displays[0].profile_list.clone();
+                    
+                    let visual_data = ui.visuals_mut();
+                    let old_visual_data = visual_data.widgets.clone(); // Reset dnd zone disabling colors may not be nessisary.
+                    visual_data.widgets.inactive.bg_fill = egui::Color32::TRANSPARENT; // DND zone disable colors
+                    visual_data.widgets.hovered.bg_fill  = egui::Color32::TRANSPARENT; // DND zone disable colors
+                    visual_data.widgets.active.bg_fill   = egui::Color32::TRANSPARENT; // DND zone disable colors
+                    let (_, dropped_payload) = ui.dnd_drop_zone::<super::app::DisplayProfile, ()>(dnd_frame, |ui| {
+                        ui.visuals_mut().widgets = old_visual_data; // Reset dnd zone disabling colors may not be nessisary.
+                        ui.set_min_height(100.0);
+                        ui.set_width(ui.available_width());
+
+
+                        ui.vertical(|ui: &mut Ui| {
+                            for (row_idx, mut instan) in data_arr.into_iter().enumerate() {
+                                
+                                instan.display_idx = 0;
+                                instan.profile_display_idx = row_idx;
+                                
+
+                                let id: eframe::egui::Id = ui.make_persistent_id(&instan.prof_name);
+                                self.dnd_drag_source_cust(ui, id, instan.clone(), |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.style_mut().spacing.item_spacing = egui::Vec2 { x: 3.0, y: 0.0 };
+
+                                        let test = ui.button("Ｓ").on_hover_text("Move handle");
+                                        ui.interact(test.rect, id, egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
+
+
+                                        ui.button("🗑").on_hover_text("Remove");
+                                        ui.button("✏").on_hover_text("Remove").sense = egui::Sense::click(); // Use fontdrop.info to find the correct glifs
+                                        ui.button(&instan.prof_name).on_hover_text("HI HIH I");
+
+                                    });
+                                });
+                                // ui.dnd_drag_source(ui.next_auto_id(), instan.clone(), |ui| {
+                                //     // let asd_frame: egui::Frame = egui::Frame::group(ui.style()).inner_margin(0);
+                                //     // asd_frame.show(ui, |ui| {
+                                    
+                                //         ui.horizontal(|ui| {
+                                //             ui.style_mut().spacing.item_spacing = egui::Vec2 { x: 3.0, y: 0.0 };
+                                //             ui.button("🗑").on_hover_text("Remove");
+                                //             ui.button("✏").on_hover_text("Remove").sense = egui::Sense::click(); // Use fontdrop.info to find the correct glifs
+                                //             ui.button(&instan.prof_name).on_hover_text("HI HIH I");
+
+                                //         });
+                                //     // })
+                                    
+                                    
+                                // }).response.interact(egui::Sense::click());
+
+
+                                // let id: eframe::egui::Id = ui.make_persistent_id(&instan.prof_name);
+
+                                // // First render normally
+                                // let inner = ui.horizontal(|ui| {
+
+                                //     // let handle = ui
+                                //     //     .add(egui::Label::new("⠿").sense(egui::Sense::drag()));
+
+                                //     // // Important: prevent text selection while dragging
+                                //     // if handle.dragged() {
+                                //     //     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                                //     // }
+
+                                //         // Create the drag handle
+                                //     let handle = ui.add(
+                                //         egui::Label::new("⠿")
+                                //     );
+
+                                //     // Make ONLY the handle draggable with the ID
+                                //     let drag_response = ui.interact(
+                                //         handle.rect,
+                                //         id,
+                                //         egui::Sense::drag()
+                                //     ).on_hover_cursor(egui::CursorIcon::Grab);
+
+                                //     if drag_response.drag_started() {
+                                //         egui::DragAndDrop::set_payload(ui.ctx(), instan.clone());
+                                //     }
+
+                                //     // handle.dnd_set_drag_payload(instan.clone());
+
+                                //     if ui.button("🗑").clicked() {}
+                                //     if ui.button("✏").clicked() {}
+                                //     ui.label(&instan.prof_name);
+
+                                // });
+
+                                // let response = inner.response;
+
+                                // // --- Custom Preview Logic ---
+                                // if ui.ctx().is_being_dragged(id) {
+                                //     println!("agasd");
+
+                                //     // Store payload
+                                //     egui::DragAndDrop::set_payload(ui.ctx(), instan.clone());
+
+                                //     // Paint row into tooltip layer
+                                //     let layer_id = egui::LayerId::new(egui::Order::Tooltip, id);
+
+                                //     let egui::InnerResponse { response, .. } =
+                                //         ui.scope_builder(egui::UiBuilder::new().layer_id(layer_id), |ui| {
+                                //             ui.horizontal(|ui| {
+                                //                 ui.label("⠿");
+                                                
+                                //                 if ui.button("🗑").clicked() {}
+                                //                 if ui.button("✏").clicked() {}
+                                //                 ui.label(&instan.prof_name);
+                                //             });
+                                //         });
+
+                                //     if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
+                                //         let delta = (pointer_pos - response.rect.center());
+                                //         ui.ctx().transform_layer_shapes(
+                                //             layer_id,
+                                //             egui::emath::TSTransform::from_translation(delta),
+                                //         );
+                                //     }
+                                // }
+
+
+                                // ui.horizontal(|ui| {
+
+                                //     let handle = ui
+                                //         .add(egui::Label::new("⠿").sense(egui::Sense::drag()));
+
+                                //     handle.dnd_set_drag_payload(instan.clone());
+
+                                //     // --- Rest of row (normal interaction) ---
+                                //     if ui.button("🗑").clicked() {
+                                //         println!("Remove");
+                                //     }
+
+                                //     if ui.button("✏").clicked() {
+                                //         println!("Edit");
+                                //     }
+
+                                //     ui.label(&instan.prof_name);
+                                // });
+
+
+
+
+
+                            }
+                        });
+                    });
+
+                    if let Some(payload_drop) = dropped_payload {
+                        let item = payload_drop;
+                        let asd_removed = self.testing_displays[item.display_idx].profile_list.remove(item.profile_display_idx);
+                        self.testing_displays[0].profile_list.push(asd_removed);
+                    }
+
+                });
+            })
+        });
+
+
+        ui.horizontal_top(|ui| {
+            egui::ScrollArea::both().show(ui, |ui| {
+                ui.set_height(ui.available_height());
+
+                for (col_idx, display_column) in self.testing_displays.clone().into_iter().enumerate() {
+                    if col_idx == 0 {
+                        continue;
+                    }
+                    let dnd_frame: egui::Frame = egui::Frame::group(ui.style())
+                        .inner_margin(0);
+
+                    dnd_frame.show(ui, |ui| {
+                        let visual_data = ui.visuals_mut();
+                        let old_visual_data = visual_data.widgets.clone(); // Reset dnd zone disabling colors may not be nessisary.
+                        visual_data.widgets.inactive.bg_fill = egui::Color32::TRANSPARENT; // DND zone disable colors
+                        visual_data.widgets.hovered.bg_fill  = egui::Color32::TRANSPARENT; // DND zone disable colors
+                        visual_data.widgets.active.bg_fill   = egui::Color32::TRANSPARENT; // DND zone disable colors
+                        let (_, dropped_payload) = ui.dnd_drop_zone::<super::app::DisplayProfile, ()>(dnd_frame, |ui| {
+                            ui.visuals_mut().widgets = old_visual_data; // Reset dnd zone disabling colors may not be nessisary.
+                            ui.set_min_height(100.0);
+                            ui.set_width(150.0);
+
+
+                            ui.vertical(|ui: &mut Ui| {
+                                ui.label(display_column.display_name);
+                                for (row_idx, mut instan) in display_column.profile_list.into_iter().enumerate() {
+                                    
+                                    instan.display_idx = col_idx;
+                                    instan.profile_display_idx = row_idx;
+                                    
+
+                                    ui.dnd_drag_source(ui.next_auto_id(), instan.clone(), |ui| {
+                                        // ui.button(instan.prof_name).on_hover_text("HI HIH I");
+                                        // let asd_frame: egui::Frame = egui::Frame::group(ui.style()).inner_margin(0);
+                                        // asd_frame.show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.style_mut().spacing.item_spacing = egui::Vec2 { x: 3.0, y: 0.0 };
+                                                ui.button("🗑").on_hover_text("Remove");
+                                                ui.button("✏").on_hover_text("Remove"); // Use fontdrop.info to find the correct glifs
+                                                ui.button(&instan.prof_name).on_hover_text("HI HIH I");
+
+                                            });
+                                        // });
+                                    });
+                                }
+                            });
+                        });
+
+                        if let Some(payload_drop) = dropped_payload {
+                            let item = payload_drop;
+                            let asd_removed = self.testing_displays[item.display_idx].profile_list.remove(item.profile_display_idx);
+                            self.testing_displays[col_idx].profile_list.push(asd_removed);
+
+                        }
+                    });
+                    
+                }
+
+                    ui.style_mut().override_text_style = Some(egui::TextStyle::Heading);
+                    if ui.button("➕").clicked() {
+                        println!("ADD NEW DISPLAY")
+                    }
+                    
+                    ui.style_mut().override_text_style = None;
+                ui.add_space(10.0);
+            });
+        });
+    }
+
 
     pub fn display_settings_general(&mut self, ui: &mut Ui) {
         let check_for_app_updates = ui.checkbox(&mut self.options.check_for_updates, "Check for partydeck updates");
