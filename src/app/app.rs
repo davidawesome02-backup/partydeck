@@ -37,10 +37,29 @@ pub struct DisplayProfile {
     pub profile_display_idx: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum DisplayCompTypeKwinSplit {
+    #[default]
+    None,
+    Vertical,
+    Horizontal,
+    // GameLayout,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum DisplayCompType {
+    #[default]
+    Native, // Directly open windows like normal
+    None, // No display to be opened, run the gamescope instances with --backend headless
+    Nested(String), // Subcompositor name / path.
+    KDE // Split type
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Display {
     pub profile_list: Vec<DisplayProfile>,
     pub display_name: String,
+    pub comp_type: DisplayCompType,
+    pub kde_split_type: DisplayCompTypeKwinSplit,
 }
 
 pub struct PartyApp {
@@ -67,7 +86,8 @@ pub struct PartyApp {
     #[allow(dead_code)]
     pub task: Option<std::thread::JoinHandle<()>>,
 
-    pub testing_displays: Vec<Display>,
+    pub current_editing_display: usize, // 0 Is closed.
+    pub testing_displays: Vec<Display>, // 0 Is unused instances.
 }
 
 macro_rules! cur_handler {
@@ -108,12 +128,39 @@ impl PartyApp {
             loading_msg: None,
             loading_since: None,
             task: None,
+            current_editing_display: 0,
+            // testing_displays: vec![
+            //     Display { 
+            //         profile_list: Vec::new(), 
+            //         display_name: "Unused".to_string(), 
+            //         comp_type: DisplayCompType::Native, 
+            //         kde_split_type: DisplayCompTypeKwinSplit::None 
+            //     }
+            // ],
             testing_displays: vec![
-                vec!["testa","testab"],
-                vec!["testb"],
-                vec!["testc"],
-                vec!["testd","testf","testg"],
-                vec!["teste"],
+                // vec!["testa","testab"],
+                // vec!["testb"],
+                // vec!["testc"],
+                // vec!["testd","testf","testg"],
+                // vec!["teste"],
+                vec!["1"],
+                vec!["22"],
+                vec!["333"],
+                vec!["4444"],
+                vec!["55555"],
+                vec!["666666"],
+                vec!["7777777"],
+                vec!["88888888"],
+                vec!["999999999"],
+                vec!["0000000000"],
+                vec!["11111111111"],
+                vec!["222222222222"],
+                vec!["3333333333333"],
+                vec!["44444444444444"],
+                vec!["555555555555555"],
+                vec!["6666666666666666"],
+                vec!["77777777777777777"],
+                vec!["888888888888888888"],
             ].into_iter()
             .map(|v| {
                 i+=1;
@@ -126,6 +173,9 @@ impl PartyApp {
                         }
                     }).collect(), 
                     display_name: format!("Display {}", i),
+
+                    comp_type: DisplayCompType::Native,
+                    kde_split_type: DisplayCompTypeKwinSplit::None,
                 }
             })
             .collect(),
