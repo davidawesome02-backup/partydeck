@@ -410,6 +410,7 @@ impl PartyApp {
         let display_column = self.testing_displays[col_idx].clone();
 
         let mut to_be_moved = None;
+        let mut to_be_edited = None;
 
         for (row_idx, mut instan) in display_column.profile_list.into_iter().enumerate() {
             instan.display_idx = col_idx;
@@ -443,11 +444,13 @@ impl PartyApp {
                                     // TODO
                                 } else {
                                     to_be_moved = Some(row_idx);
-                                    
                                 }
                             }
                         });
-                        ui.button("✏").on_hover_text("Edit"); // Use fontdrop.info to find the correct glifs
+
+                        if ui.button("✏").on_hover_text("Edit").clicked() {
+                            to_be_edited = Some(row_idx);
+                        } // Use fontdrop.info to find the correct glifs
 
                         let mut short_name = instan.prof_name.clone();
                         if short_name.len()>=11 {
@@ -464,6 +467,10 @@ impl PartyApp {
         if let Some(row_idx) = to_be_moved {
             let asd_removed = self.testing_displays[col_idx].profile_list.remove(row_idx);
             self.testing_displays[0].profile_list.push(asd_removed);
+        }
+
+        if let Some(row_idx) = to_be_edited {
+            self.current_editing_profile = Some([col_idx, row_idx]);
         }
     }
 
@@ -506,8 +513,8 @@ impl PartyApp {
 
                     if let Some(payload_drop) = dropped_payload {
                         let item = payload_drop;
-                        let asd_removed = self.testing_displays[item.display_idx].profile_list.remove(item.profile_display_idx);
-                        self.testing_displays[0].profile_list.push(asd_removed);
+                        let profile_removed = self.testing_displays[item.display_idx].profile_list.remove(item.profile_display_idx);
+                        self.testing_displays[0].profile_list.push(profile_removed);
                     }
 
                 });
@@ -517,212 +524,334 @@ impl PartyApp {
 
         ui.horizontal_top(|ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.set_height(ui.available_height());
-                ui.set_width(ui.available_width());
+                ui.vertical(|ui| {
+                
+                    ui.set_height(ui.available_height());
+                    ui.set_width(ui.available_width());
 
-                let total_width_row = (ui.available_width()/(150.0+5.0)).max(1.0) as usize;
-                let mut row_current_count = 0 as usize;
+                    let total_width_row = (ui.available_width()/(150.0+5.0)).max(1.0) as usize;
+                    let mut row_current_count = 0 as usize;
 
-                egui::Grid::new(ui.next_auto_id())
-                    .spacing(egui::Vec2::new(5.0,5.0))
-                    .show(ui, |ui| {
-                    for (col_idx, display_column) in self.testing_displays.clone().into_iter().enumerate() {
-                        if col_idx == 0 { // Ignore the unused bottom section's ones - always index 0.
-                            continue;
+                    egui::Grid::new(ui.next_auto_id())
+                        .spacing(egui::Vec2::new(5.0,5.0))
+                        .show(ui, |ui| {
+                        for (col_idx, display_column) in self.testing_displays.clone().into_iter().enumerate() {
+                            if col_idx == 0 { // Ignore the unused bottom section's ones - always index 0.
+                                continue;
+                            }
+
+                            if row_current_count>=total_width_row {
+                                row_current_count = 0;
+                                ui.end_row();
+                            }
+                            row_current_count+=1;
+
+                            let dnd_frame: egui::Frame = egui::Frame::group(ui.style())
+                                .inner_margin(0);
+
+                            dnd_frame.show(ui, |ui| {
+                                let visual_data = ui.visuals_mut();
+                                let old_visual_data = visual_data.widgets.clone(); // Reset dnd zone disabling colors may not be nessisary.
+                                visual_data.widgets.inactive.bg_fill = egui::Color32::TRANSPARENT; // DND zone disable colors
+                                visual_data.widgets.hovered.bg_fill  = egui::Color32::TRANSPARENT; // DND zone disable colors
+                                visual_data.widgets.active.bg_fill   = egui::Color32::TRANSPARENT; // DND zone disable colors
+                                
+                                ui.set_min_height(100.0);
+                                ui.set_width(150.0);
+                                let (_, dropped_payload) = ui.dnd_drop_zone::<super::app::DisplayProfile, ()>(dnd_frame, |ui| {
+                                    ui.visuals_mut().widgets = old_visual_data; // Reset dnd zone disabling colors may not be nessisary.
+                                    ui.set_min_height(ui.available_height());
+                                    ui.set_width(ui.available_width());
+
+
+                                    ui.vertical(|ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.style_mut().spacing.item_spacing.x = 3.0;
+
+                                            if ui.button("✏").on_hover_text("Edit").clicked() {
+                                                self.current_editing_display = col_idx;
+                                            }
+
+                                            let mut short_name = display_column.display_name.clone();
+                                            if short_name.len()>=20 {
+                                                short_name.truncate(17);
+                                                short_name.push_str("...");
+                                            }
+                                            ui.label(short_name);
+                                        });
+
+                                        
+                                        self.instances_display_collumn(ui ,col_idx);
+                                    });
+                                });
+
+                                if let Some(payload_drop) = dropped_payload {
+                                    let item = payload_drop;
+                                    let profile_removed = self.testing_displays[item.display_idx].profile_list.remove(item.profile_display_idx);
+                                    self.testing_displays[col_idx].profile_list.push(profile_removed);
+
+                                }
+                            });
                         }
 
                         if row_current_count>=total_width_row {
-                            row_current_count = 0;
                             ui.end_row();
                         }
-                        row_current_count+=1;
+                        
+                        ui.scope(|ui| {
+                            ui.style_mut().override_text_style = Some(egui::TextStyle::Heading);
 
-                        let dnd_frame: egui::Frame = egui::Frame::group(ui.style())
-                            .inner_margin(0);
-
-                        dnd_frame.show(ui, |ui| {
-                            let visual_data = ui.visuals_mut();
-                            let old_visual_data = visual_data.widgets.clone(); // Reset dnd zone disabling colors may not be nessisary.
-                            visual_data.widgets.inactive.bg_fill = egui::Color32::TRANSPARENT; // DND zone disable colors
-                            visual_data.widgets.hovered.bg_fill  = egui::Color32::TRANSPARENT; // DND zone disable colors
-                            visual_data.widgets.active.bg_fill   = egui::Color32::TRANSPARENT; // DND zone disable colors
-                            
-                            ui.set_min_height(100.0);
-                            ui.set_width(150.0);
-                            let (_, dropped_payload) = ui.dnd_drop_zone::<super::app::DisplayProfile, ()>(dnd_frame, |ui| {
-                                ui.visuals_mut().widgets = old_visual_data; // Reset dnd zone disabling colors may not be nessisary.
-                                ui.set_min_height(ui.available_height());
-                                ui.set_width(ui.available_width());
-
-
-                                ui.vertical(|ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.style_mut().spacing.item_spacing.x = 3.0;
-
-                                        if ui.button("✏").on_hover_text("Edit").clicked() {
-                                            self.current_editing_display = col_idx;
-                                        }
-
-                                        let mut short_name = display_column.display_name.clone();
-                                        if short_name.len()>=20 {
-                                            short_name.truncate(17);
-                                            short_name.push_str("...");
-                                        }
-                                        ui.label(short_name);
-                                    });
-
-                                    
-                                    self.instances_display_collumn(ui ,col_idx);
+                            let add_button = egui::Button::new("➕")
+                                .min_size(egui::Vec2 { x: 150.0, y: 100.0 });
+                            if ui.add(add_button).clicked() {
+                                println!("ADD NEW DISPLAY");
+                                self.current_editing_display = self.testing_displays.len();
+                                self.testing_displays.push(Display {
+                                    display_name: format!("Display - {}", self.testing_displays.len()).clone(),
+                                    profile_list: Vec::new(),
+                                    comp_type: crate::app::app::DisplayCompType::Native,
+                                    kde_split_type: DisplayCompTypeKwinSplit::None,
                                 });
-                            });
-
-                            if let Some(payload_drop) = dropped_payload {
-                                let item = payload_drop;
-                                let asd_removed = self.testing_displays[item.display_idx].profile_list.remove(item.profile_display_idx);
-                                self.testing_displays[col_idx].profile_list.push(asd_removed);
-
                             }
                         });
-                    }
 
-                    if row_current_count>=total_width_row {
-                        ui.end_row();
-                    }
-                    
-                    ui.scope(|ui| {
-                        ui.style_mut().override_text_style = Some(egui::TextStyle::Heading);
-
-                        let add_button = egui::Button::new("➕")
-                            .min_size(egui::Vec2 { x: 150.0, y: 100.0 });
-                        if ui.add(add_button).clicked() {
-                            println!("ADD NEW DISPLAY");
-                            self.current_editing_display = self.testing_displays.len();
-                            self.testing_displays.push(Display {
-                                display_name: format!("Display - {}", self.testing_displays.len()).clone(),
-                                profile_list: Vec::new(),
-                                comp_type: crate::app::app::DisplayCompType::Native,
-                                kde_split_type: DisplayCompTypeKwinSplit::None,
-                            });
-                        }
                     });
 
+                    ui.add_space(5.0);
                 
                 });
-                
             });
         });
 
 
-        if self.current_editing_display != 0 {
-            egui::Modal::new(ui.next_auto_id()).show(ui.ctx(), |ui| {
-                // let current_display = &mut self.testing_displays[self.current_editing_display];
+        
 
-                let mut delete_next = false;
-                let mut close_next = false;
 
-                ui.horizontal(|ui| {
-                    ui.scope(|ui| {
-                        ui.style_mut().visuals.widgets.inactive.weak_bg_fill = egui::Color32::DARK_RED;
-                        ui.style_mut().visuals.widgets.active.weak_bg_fill = egui::Color32::DARK_RED;
-                        ui.style_mut().visuals.widgets.hovered.weak_bg_fill = egui::Color32::DARK_RED;
-                        if ui.button("🗑").on_hover_text("Remove").clicked() {
-                            while let Some(test) = self.testing_displays[self.current_editing_display].profile_list.pop() {
-                                self.testing_displays[0].profile_list.push(test);
-                            }
+        // if loop {
+        //     if let Some([edit_col_idx, edit_row_idx]) = self.current_editing_profile {
+        //         if edit_col_idx>self.testing_displays.len() {break true;}
+        //         let edit_display = &mut self.testing_displays[edit_col_idx];
 
-                            delete_next = true;
-                        }
-                    });
-                    ui.heading("Modify display");
+        //         if edit_row_idx>edit_display.profile_list.len() {break true;}
+        //         let profile = &mut edit_display.profile_list[edit_row_idx];
+
+        //         todo!("{:?}",profile); // TODO, process the profile for actual modification
+        //     }
+            
+        //     break false;
+        // } {
+        //     self.current_editing_profile = None;
+        // }
+
+        self.display_page_instanes_edit_displays(ui);
+        self.display_page_instances_edit_instance(ui);
+
+    }
+
+    pub fn display_page_instanes_edit_displays(&mut self, ui: &mut Ui) {
+        if self.current_editing_display == 0 {
+            return;
+        }
+
+        egui::Modal::new(ui.next_auto_id()).show(ui.ctx(), |ui| {
+            let mut delete_next = false;
+            let mut close_next = false;
+
+            // It's okay to borrow display mutably here, as long as we don't remove from self.testing_displays
+            let display_index = self.current_editing_display;
+            let display = &mut self.testing_displays[display_index];
+
+            ui.horizontal(|ui| {
+                ui.scope(|ui| {
+                    ui.style_mut().visuals.widgets.inactive.weak_bg_fill = egui::Color32::DARK_RED;
+                    ui.style_mut().visuals.widgets.active.weak_bg_fill = egui::Color32::DARK_RED;
+                    ui.style_mut().visuals.widgets.hovered.weak_bg_fill = egui::Color32::DARK_RED;
+                    if ui.button("🗑").on_hover_text("Remove").clicked() {
+                        // Release mutable borrow by handling move outside this closure.
+                        delete_next = true;
+                    }
                 });
+                ui.heading("Modify display");
+            });
 
-                
+            ui.horizontal(|ui| {
+                ui.label("Display name");
+                ui.text_edit_singleline(&mut display.display_name);
+            });
 
-                ui.horizontal(|ui| {
-                    ui.label("Display name");
-                    ui.text_edit_singleline(&mut self.testing_displays[self.current_editing_display].display_name);
-                });
+            let comp_selected_text = match &display.comp_type {
+                DisplayCompType::Native => "Native".to_string(),
+                DisplayCompType::None => "None (hidden)".to_string(),
+                DisplayCompType::Nested(nested) => match nested.as_str() {
+                    "river" => "(nested) River".to_string(),
+                    "kwin" => "(nested) Kwin".to_string(),
+                    other => format!("(nested) {other}"),
+                },
+                DisplayCompType::KDE => "KDE".to_string(),
+            };
 
-
-                let comp_selected_text = match &self.testing_displays[self.current_editing_display].comp_type {
-                    DisplayCompType::Native => "Native".to_string(),
-                    DisplayCompType::None => "None (hidden)".to_string(),
-                    DisplayCompType::Nested(nested_comp_type) => {
-                        match nested_comp_type.as_str() {
-                            "river" => "(nested) River".to_string(),
-                            "kwin" => "(nested) Kwin".to_string(),
-                            remaining => format!("(nested) {remaining}"),
-                        }
-                    },
-                    DisplayCompType::KDE => "KDE".to_string(),
-                };
-
-                egui::ComboBox::from_label("Window type")
-                    .selected_text(comp_selected_text)
-                    .show_ui(ui, |ui| {
-                        if ui.selectable_label(self.testing_displays[self.current_editing_display].comp_type==DisplayCompType::Native, "Native").clicked() {
-                            self.testing_displays[self.current_editing_display].comp_type = DisplayCompType::Native;
-                        }
-                        if ui.selectable_label(self.testing_displays[self.current_editing_display].comp_type==DisplayCompType::None, "None (hidden)").clicked() {
-                            self.testing_displays[self.current_editing_display].comp_type = DisplayCompType::None;
-                        }
-                        if ui.selectable_label(self.testing_displays[self.current_editing_display].comp_type==DisplayCompType::Nested("kwin".to_string()), "(nested) Kwin").clicked() {
-                            self.testing_displays[self.current_editing_display].comp_type = DisplayCompType::Nested("kwin".to_string());
-                        }
-                        if ui.selectable_label(self.testing_displays[self.current_editing_display].comp_type==DisplayCompType::Nested("river".to_string()), "(nested) River").clicked() {
-                            self.testing_displays[self.current_editing_display].comp_type = DisplayCompType::Nested("river".to_string());
-                        }
-                        if ui.selectable_label(self.testing_displays[self.current_editing_display].comp_type==DisplayCompType::KDE, "KDE").clicked() {
-                            self.testing_displays[self.current_editing_display].comp_type = DisplayCompType::KDE;
-                        }
-                    });
-
-                if self.testing_displays[self.current_editing_display].comp_type==DisplayCompType::KDE {
-                    let kde_split_type_text = match self.testing_displays[self.current_editing_display].kde_split_type {
-                        DisplayCompTypeKwinSplit::None => "None",
-                        DisplayCompTypeKwinSplit::Vertical => "Vertical",
-                        DisplayCompTypeKwinSplit::Horizontal => "Horizontal",
-                        // DisplayCompTypeKwinSplit::GameLayout => "Game layout",
-                    };
-                    egui::ComboBox::from_label("Kde split style")
-                        .selected_text(kde_split_type_text)
-                        .show_ui(ui, |ui| {
-                            if ui.selectable_label(self.testing_displays[self.current_editing_display].kde_split_type==DisplayCompTypeKwinSplit::None, "None").clicked() {
-                                self.testing_displays[self.current_editing_display].kde_split_type = DisplayCompTypeKwinSplit::None;
-                            }
-                            if ui.selectable_label(self.testing_displays[self.current_editing_display].kde_split_type==DisplayCompTypeKwinSplit::Vertical, "Vertical").clicked() {
-                                self.testing_displays[self.current_editing_display].kde_split_type = DisplayCompTypeKwinSplit::Vertical;
-                            }
-                            if ui.selectable_label(self.testing_displays[self.current_editing_display].kde_split_type==DisplayCompTypeKwinSplit::Horizontal, "Horizontal").clicked() {
-                                self.testing_displays[self.current_editing_display].kde_split_type = DisplayCompTypeKwinSplit::Horizontal;
-                            }
-                            // if ui.selectable_label(self.testing_displays[self.current_editing_display].comp_type==DisplayCompType::GameLayout, "Game layout").clicked() {
-                            //     self.testing_displays[self.current_editing_display].comp_type = DisplayCompType::GameLayout;
-                            // }
-                        });
-                }
-
-                    
-
-                ui.vertical_centered(|ui| {
-                    if ui.button("Close").clicked() {
-                        close_next = true;
+            egui::ComboBox::from_label("Window type")
+                .selected_text(comp_selected_text)
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(display.comp_type == DisplayCompType::Native, "Native").clicked() {
+                        display.comp_type = DisplayCompType::Native;
+                    }
+                    if ui.selectable_label(display.comp_type == DisplayCompType::None, "None (hidden)").clicked() {
+                        display.comp_type = DisplayCompType::None;
+                    }
+                    if ui.selectable_label(display.comp_type == DisplayCompType::Nested("kwin".to_string()), "(nested) Kwin").clicked() {
+                        display.comp_type = DisplayCompType::Nested("kwin".to_string());
+                    }
+                    if ui.selectable_label(display.comp_type == DisplayCompType::Nested("river".to_string()), "(nested) River").clicked() {
+                        display.comp_type = DisplayCompType::Nested("river".to_string());
+                    }
+                    if ui.selectable_label(display.comp_type == DisplayCompType::KDE, "KDE").clicked() {
+                        display.comp_type = DisplayCompType::KDE;
                     }
                 });
 
+            if display.comp_type == DisplayCompType::KDE || display.comp_type == DisplayCompType::Nested("kwin".to_string()) {
+                let kde_split_type_text = match display.kde_split_type {
+                    DisplayCompTypeKwinSplit::None => "None",
+                    DisplayCompTypeKwinSplit::Vertical => "Vertical",
+                    DisplayCompTypeKwinSplit::Horizontal => "Horizontal",
+                };
+                egui::ComboBox::from_label("Kde split style")
+                    .selected_text(kde_split_type_text)
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(display.kde_split_type == DisplayCompTypeKwinSplit::None, "None").clicked() {
+                            display.kde_split_type = DisplayCompTypeKwinSplit::None;
+                        }
+                        if ui.selectable_label(display.kde_split_type == DisplayCompTypeKwinSplit::Vertical, "Vertical").clicked() {
+                            display.kde_split_type = DisplayCompTypeKwinSplit::Vertical;
+                        }
+                        if ui.selectable_label(display.kde_split_type == DisplayCompTypeKwinSplit::Horizontal, "Horizontal").clicked() {
+                            display.kde_split_type = DisplayCompTypeKwinSplit::Horizontal;
+                        }
+                    });
+            }
 
-                if delete_next {
+            ui.vertical_centered(|ui| {
+                if ui.button("Close").clicked() {
                     close_next = true;
-                    self.testing_displays.remove(self.current_editing_display);
                 }
-                if close_next {
-                    self.current_editing_display = 0;
-                }
-                
             });
-        }
+            
+            if delete_next {
+                let moving_profiles = self.testing_displays[display_index].profile_list.drain(..).collect::<Vec<_>>();
+                self.testing_displays[0].profile_list.extend(moving_profiles);
+                self.testing_displays.remove(display_index);
+                close_next = true;
+            }
+            if close_next {
+                self.current_editing_display = 0;
+            }
+        });
     }
 
+    pub fn display_page_instances_edit_instance(&mut self, ui: &mut Ui) {
+        let Some([col_idx, row_idx]) = self.current_editing_profile else { return; };
+
+        let Some(profile) = self.testing_displays
+            .get_mut(col_idx)
+            .and_then(|d| d.profile_list.get_mut(row_idx)) 
+        else {
+            self.current_editing_profile = None;
+            return;
+        };
+
+
+        egui::Modal::new(ui.next_auto_id()).show(ui.ctx(), |ui| {
+            let mut close_next = false;
+
+            ui.heading("Modify profile");
+
+            ui.horizontal(|ui| {
+                ui.label("profile name");
+                ui.text_edit_singleline(&mut profile.prof_name);
+            });
+
+
+            ui.label("Devices to use:");
+            for cur_device_idx in 0..self.input_devices.len() {
+                let cur_device = &self.input_devices[cur_device_idx];
+
+                let cur_device_selected = profile.inputs.contains(&cur_device_idx);
+                let mut cur_device_selected_new = cur_device_selected;
+                ui.checkbox(&mut cur_device_selected_new, cur_device.name());
+
+                if cur_device_selected_new != cur_device_selected {
+                    if cur_device_selected_new {
+                        profile.inputs.push(cur_device_idx);
+                    } else {
+                        profile.inputs.retain(|&val| val != cur_device_idx);
+                    }
+                }
+            }
+
+            // let comp_selected_text = match &display.comp_type {
+            //     DisplayCompType::Native => "Native".to_string(),
+            //     DisplayCompType::None => "None (hidden)".to_string(),
+            //     DisplayCompType::Nested(nested) => match nested.as_str() {
+            //         "river" => "(nested) River".to_string(),
+            //         "kwin" => "(nested) Kwin".to_string(),
+            //         other => format!("(nested) {other}"),
+            //     },
+            //     DisplayCompType::KDE => "KDE".to_string(),
+            // };
+
+            // egui::ComboBox::from_label("Window type")
+            //     .selected_text(comp_selected_text)
+            //     .show_ui(ui, |ui| {
+            //         if ui.selectable_label(display.comp_type == DisplayCompType::Native, "Native").clicked() {
+            //             display.comp_type = DisplayCompType::Native;
+            //         }
+            //         if ui.selectable_label(display.comp_type == DisplayCompType::None, "None (hidden)").clicked() {
+            //             display.comp_type = DisplayCompType::None;
+            //         }
+            //         if ui.selectable_label(display.comp_type == DisplayCompType::Nested("kwin".to_string()), "(nested) Kwin").clicked() {
+            //             display.comp_type = DisplayCompType::Nested("kwin".to_string());
+            //         }
+            //         if ui.selectable_label(display.comp_type == DisplayCompType::Nested("river".to_string()), "(nested) River").clicked() {
+            //             display.comp_type = DisplayCompType::Nested("river".to_string());
+            //         }
+            //         if ui.selectable_label(display.comp_type == DisplayCompType::KDE, "KDE").clicked() {
+            //             display.comp_type = DisplayCompType::KDE;
+            //         }
+            //     });
+
+            // if display.comp_type == DisplayCompType::KDE {
+            //     let kde_split_type_text = match display.kde_split_type {
+            //         DisplayCompTypeKwinSplit::None => "None",
+            //         DisplayCompTypeKwinSplit::Vertical => "Vertical",
+            //         DisplayCompTypeKwinSplit::Horizontal => "Horizontal",
+            //     };
+            //     egui::ComboBox::from_label("Kde split style")
+            //         .selected_text(kde_split_type_text)
+            //         .show_ui(ui, |ui| {
+            //             if ui.selectable_label(display.kde_split_type == DisplayCompTypeKwinSplit::None, "None").clicked() {
+            //                 display.kde_split_type = DisplayCompTypeKwinSplit::None;
+            //             }
+            //             if ui.selectable_label(display.kde_split_type == DisplayCompTypeKwinSplit::Vertical, "Vertical").clicked() {
+            //                 display.kde_split_type = DisplayCompTypeKwinSplit::Vertical;
+            //             }
+            //             if ui.selectable_label(display.kde_split_type == DisplayCompTypeKwinSplit::Horizontal, "Horizontal").clicked() {
+            //                 display.kde_split_type = DisplayCompTypeKwinSplit::Horizontal;
+            //             }
+            //         });
+            // }
+
+            ui.vertical_centered(|ui| {
+                if ui.button("Close").clicked() {
+                    close_next = true;
+                }
+            });
+
+            if close_next {
+                self.current_editing_profile = None;
+            }
+        });
+    }
 
     pub fn display_settings_general(&mut self, ui: &mut Ui) {
         let check_for_app_updates = ui.checkbox(&mut self.options.check_for_updates, "Check for partydeck updates");

@@ -35,6 +35,7 @@ pub struct DisplayProfile {
     pub prof_name: String,
     pub display_idx: usize, // Index 0 is the unused ones.
     pub profile_display_idx: usize,
+    pub inputs: Vec<usize> // Index into the devices list
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -87,6 +88,7 @@ pub struct PartyApp {
     pub task: Option<std::thread::JoinHandle<()>>,
 
     pub current_editing_display: usize, // 0 Is closed.
+    pub current_editing_profile: Option<[usize; 2]>, // [0] = display index, [1] = profile index from that display.
     pub testing_displays: Vec<Display>, // 0 Is unused instances.
 }
 
@@ -129,6 +131,7 @@ impl PartyApp {
             loading_since: None,
             task: None,
             current_editing_display: 0,
+            current_editing_profile: None,
             // testing_displays: vec![
             //     Display { 
             //         profile_list: Vec::new(), 
@@ -170,6 +173,7 @@ impl PartyApp {
                             prof_name: str.to_string(),
                             display_idx: 0,
                             profile_display_idx: 0,
+                            inputs: Vec::new()
                         }
                     }).collect(), 
                     display_name: format!("Display {}", i),
