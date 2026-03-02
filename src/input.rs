@@ -1,3 +1,5 @@
+use std::hash::{Hash, Hasher};
+
 use crate::app::PadFilterType;
 
 use evdev::*;
@@ -40,6 +42,7 @@ pub struct DeviceInfo {
 pub struct InputDevice {
     path: String,
     dev: Device,
+    hash: u64,
     enabled: bool,
     device_type: DeviceType,
     has_button_held: bool,
@@ -67,6 +70,9 @@ impl InputDevice {
     }
     pub fn path(&self) -> &str {
         &self.path
+    }
+    pub fn hash(&self) -> u64 {
+        self.hash
     }
     pub fn enabled(&self) -> bool {
         self.enabled
@@ -134,20 +140,12 @@ impl InputDevice {
     }
 }
 
-pub fn create_input_device_from_path(path: String) -> Option<InputDevice> {
-    println!("PATH EXISTS: {}", std::path::Path::new(&path).exists());
-    if let Ok(raw_dev) = Device::open(&path) {
-
-        return Some(InputDevice {
-            path: path,
-            dev: raw_dev,
-            enabled: true,
-            device_type: DeviceType::Keyboard,
-            has_button_held: false,
-        })
-    }
-    None
+fn calculate_device_hash(dev: &Device) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    (&(dev.unique_name(),dev.input_id(),dev.name())).hash(&mut hasher); // The Hash trait defines how a type should be traversed by the hash function
+    hasher.finish()
 }
+
 
 pub fn scan_input_devices(filter: &PadFilterType) -> Vec<InputDevice> {
     let mut pads: Vec<InputDevice> = Vec::new();
@@ -180,6 +178,8 @@ pub fn scan_input_devices(filter: &PadFilterType) -> Vec<InputDevice> {
             DeviceType::Other
         };
 
+        let device_hash = calculate_device_hash(&dev.1);
+
         if device_type != DeviceType::Other {
             if dev.1.set_nonblocking(true).is_err() {
                 println!(
@@ -191,6 +191,7 @@ pub fn scan_input_devices(filter: &PadFilterType) -> Vec<InputDevice> {
             pads.push(InputDevice {
                 path: dev.0.to_str().unwrap().to_string(),
                 dev: dev.1,
+                hash: device_hash,
                 enabled,
                 device_type,
                 has_button_held: false,

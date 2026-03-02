@@ -1,6 +1,6 @@
 use super::app::{MenuPage, PartyApp, SettingsPage};
 use super::config::*;
-use crate::app::app::{Display, DisplayCompType, DisplayCompTypeKwinSplit};
+use crate::app::app::{Display, DisplayCompType, DisplayCompTypeKwinSplit, DisplayProfile};
 use crate::handler::*;
 use crate::input::*;
 use crate::paths::*;
@@ -13,6 +13,7 @@ use eframe::egui::accesskit::SortDirection;
 use eframe::egui::{RichText, vec2};
 use eframe::egui::{self, Ui};
 use egui_extras::StripBuilder;
+use nix::libc::dev_t;
 use rfd::FileDialog;
 use std::path::PathBuf;
 
@@ -509,6 +510,18 @@ impl PartyApp {
                         ui.vertical(|ui: &mut Ui| {
                             self.instances_display_collumn(ui, 0);
                         });
+
+                        if ui.button("➕").clicked() {
+                            println!("ADD new profile");
+                            let new_idx = self.testing_displays[0].profile_list.len();
+                            self.current_editing_profile = Some([0, new_idx]);
+                            self.testing_displays[0].profile_list.push(DisplayProfile {
+                                prof_name: "New temp profile".to_string(),
+                                display_idx: 0,
+                                profile_display_idx: new_idx,
+                                inputs: Vec::new(),
+                            });
+                        }
                     });
 
                     if let Some(payload_drop) = dropped_payload {
@@ -516,7 +529,6 @@ impl PartyApp {
                         let profile_removed = self.testing_displays[item.display_idx].profile_list.remove(item.profile_display_idx);
                         self.testing_displays[0].profile_list.push(profile_removed);
                     }
-
                 });
             })
         });
@@ -623,25 +635,6 @@ impl PartyApp {
             });
         });
 
-
-        
-
-
-        // if loop {
-        //     if let Some([edit_col_idx, edit_row_idx]) = self.current_editing_profile {
-        //         if edit_col_idx>self.testing_displays.len() {break true;}
-        //         let edit_display = &mut self.testing_displays[edit_col_idx];
-
-        //         if edit_row_idx>edit_display.profile_list.len() {break true;}
-        //         let profile = &mut edit_display.profile_list[edit_row_idx];
-
-        //         todo!("{:?}",profile); // TODO, process the profile for actual modification
-        //     }
-            
-        //     break false;
-        // } {
-        //     self.current_editing_profile = None;
-        // }
 
         self.display_page_instanes_edit_displays(ui);
         self.display_page_instances_edit_instance(ui);
@@ -752,6 +745,8 @@ impl PartyApp {
     pub fn display_page_instances_edit_instance(&mut self, ui: &mut Ui) {
         let Some([col_idx, row_idx]) = self.current_editing_profile else { return; };
 
+        let orig_testing_display_list = self.testing_displays.clone(); // I cant figure out borrow checking so screw it we are cloning the list (simple objects, so not too bad)
+
         let Some(profile) = self.testing_displays
             .get_mut(col_idx)
             .and_then(|d| d.profile_list.get_mut(row_idx)) 
@@ -759,6 +754,7 @@ impl PartyApp {
             self.current_editing_profile = None;
             return;
         };
+
 
 
         egui::Modal::new(ui.next_auto_id()).show(ui.ctx(), |ui| {
@@ -775,71 +771,58 @@ impl PartyApp {
             ui.label("Devices to use:");
             for cur_device_idx in 0..self.input_devices.len() {
                 let cur_device = &self.input_devices[cur_device_idx];
+                let cur_device_hash = cur_device.hash();
 
-                let cur_device_selected = profile.inputs.contains(&cur_device_idx);
+                let cur_device_selected = profile.inputs.contains(&cur_device_hash);
                 let mut cur_device_selected_new = cur_device_selected;
-                ui.checkbox(&mut cur_device_selected_new, cur_device.name());
+
+                // Terriable code, but honestly the 1ms at max this will use in any real situation dosnt matter, so I just dont care right now. In the future should be handled in a diffrent data structure
+                // we might want to store on the inputs directly where they are held, but then we have to make sure we dont endup with data mismatch. for now this testing code works.
+                let mut is_used_by_others = Vec::new();
+                
+                orig_testing_display_list.iter().enumerate().for_each(|(display_tmp_idx, display_tmp)| {
+                    display_tmp.profile_list.iter().enumerate().for_each(|(display_prof_tmp_idx, display_prof_tmp)| {
+                        if display_prof_tmp_idx==row_idx&&display_tmp_idx==col_idx {return;}
+                        if display_prof_tmp.inputs.contains(&cur_device_hash) {
+                            is_used_by_others.push((row_idx,col_idx));
+                        }
+                    });
+                });
+
+
+                let mut dev_text = egui::RichText::new(cur_device.name());
+
+                dev_text = if is_used_by_others.len()>0 { // TODO FIX THIS ITS WRONG!!!
+                    todo!("FXI");
+                    if is_used_by_others.len()>(if cur_device_selected_new {1} else {2}) {
+                        dev_text.color(egui::Color32::LIGHT_RED)
+                    } else {
+                        dev_text.color(egui::Color32::LIGHT_BLUE)
+                    }
+                } else {
+                    dev_text
+                };
+
+                // device_text
+                if !cur_device.enabled() {
+                    dev_text = dev_text.weak();
+                } else if cur_device.has_button_held() {
+                    dev_text = dev_text.strong();
+                }
+
+                ui.horizontal(|ui| {
+                    ui.add_space(15.0);
+                    ui.checkbox(&mut cur_device_selected_new, dev_text);
+                });
 
                 if cur_device_selected_new != cur_device_selected {
                     if cur_device_selected_new {
-                        profile.inputs.push(cur_device_idx);
+                        profile.inputs.push(cur_device_hash);
                     } else {
-                        profile.inputs.retain(|&val| val != cur_device_idx);
+                        profile.inputs.retain(|&val| val != cur_device_hash);
                     }
                 }
             }
-
-            // let comp_selected_text = match &display.comp_type {
-            //     DisplayCompType::Native => "Native".to_string(),
-            //     DisplayCompType::None => "None (hidden)".to_string(),
-            //     DisplayCompType::Nested(nested) => match nested.as_str() {
-            //         "river" => "(nested) River".to_string(),
-            //         "kwin" => "(nested) Kwin".to_string(),
-            //         other => format!("(nested) {other}"),
-            //     },
-            //     DisplayCompType::KDE => "KDE".to_string(),
-            // };
-
-            // egui::ComboBox::from_label("Window type")
-            //     .selected_text(comp_selected_text)
-            //     .show_ui(ui, |ui| {
-            //         if ui.selectable_label(display.comp_type == DisplayCompType::Native, "Native").clicked() {
-            //             display.comp_type = DisplayCompType::Native;
-            //         }
-            //         if ui.selectable_label(display.comp_type == DisplayCompType::None, "None (hidden)").clicked() {
-            //             display.comp_type = DisplayCompType::None;
-            //         }
-            //         if ui.selectable_label(display.comp_type == DisplayCompType::Nested("kwin".to_string()), "(nested) Kwin").clicked() {
-            //             display.comp_type = DisplayCompType::Nested("kwin".to_string());
-            //         }
-            //         if ui.selectable_label(display.comp_type == DisplayCompType::Nested("river".to_string()), "(nested) River").clicked() {
-            //             display.comp_type = DisplayCompType::Nested("river".to_string());
-            //         }
-            //         if ui.selectable_label(display.comp_type == DisplayCompType::KDE, "KDE").clicked() {
-            //             display.comp_type = DisplayCompType::KDE;
-            //         }
-            //     });
-
-            // if display.comp_type == DisplayCompType::KDE {
-            //     let kde_split_type_text = match display.kde_split_type {
-            //         DisplayCompTypeKwinSplit::None => "None",
-            //         DisplayCompTypeKwinSplit::Vertical => "Vertical",
-            //         DisplayCompTypeKwinSplit::Horizontal => "Horizontal",
-            //     };
-            //     egui::ComboBox::from_label("Kde split style")
-            //         .selected_text(kde_split_type_text)
-            //         .show_ui(ui, |ui| {
-            //             if ui.selectable_label(display.kde_split_type == DisplayCompTypeKwinSplit::None, "None").clicked() {
-            //                 display.kde_split_type = DisplayCompTypeKwinSplit::None;
-            //             }
-            //             if ui.selectable_label(display.kde_split_type == DisplayCompTypeKwinSplit::Vertical, "Vertical").clicked() {
-            //                 display.kde_split_type = DisplayCompTypeKwinSplit::Vertical;
-            //             }
-            //             if ui.selectable_label(display.kde_split_type == DisplayCompTypeKwinSplit::Horizontal, "Horizontal").clicked() {
-            //                 display.kde_split_type = DisplayCompTypeKwinSplit::Horizontal;
-            //             }
-            //         });
-            // }
 
             ui.vertical_centered(|ui| {
                 if ui.button("Close").clicked() {

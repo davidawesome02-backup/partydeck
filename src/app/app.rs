@@ -35,7 +35,7 @@ pub struct DisplayProfile {
     pub prof_name: String,
     pub display_idx: usize, // Index 0 is the unused ones.
     pub profile_display_idx: usize,
-    pub inputs: Vec<usize> // Index into the devices list
+    pub inputs: Vec<u64> // Device hash 
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -483,20 +483,20 @@ impl PartyApp {
         }
     }
 
-    pub fn remove_device_instance(&mut self, instance_index: usize, dev: usize) {
-        let device_index = self.instances[instance_index]
-            .devices
-            .iter()
-            .position(|device| device == &dev);
+    // pub fn remove_device_instance(&mut self, instance_index: usize, dev: usize) {
+    //     let device_index = self.instances[instance_index]
+    //         .devices
+    //         .iter()
+    //         .position(|device| device == &dev);
 
-        if let Some(d) = device_index {
-            self.instances[instance_index].devices.remove(d);
+    //     if let Some(d) = device_index {
+    //         self.instances[instance_index].devices.remove(d);
 
-            if self.instances[instance_index].devices.is_empty() {
-                self.instances.remove(instance_index);
-            }
-        }
-    }
+    //         if self.instances[instance_index].devices.is_empty() {
+    //             self.instances.remove(instance_index);
+    //         }
+    //     }
+    // }
 
     pub fn prepare_game_launch(&mut self) {
         if self.options.gamescope_sdl_backend {
