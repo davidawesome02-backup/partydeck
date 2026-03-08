@@ -793,8 +793,9 @@ impl PartyApp {
                 let mut dev_text = egui::RichText::new(cur_device.name());
 
                 dev_text = if is_used_by_others.len()>0 { // TODO FIX THIS ITS WRONG!!!
-                    todo!("FXI");
-                    if is_used_by_others.len()>(if cur_device_selected_new {1} else {2}) {
+                    let total_used_by = is_used_by_others.len() + if cur_device_selected_new {1} else {0};
+
+                    if total_used_by>1 { // if used by multiple at the same time
                         dev_text.color(egui::Color32::LIGHT_RED)
                     } else {
                         dev_text.color(egui::Color32::LIGHT_BLUE)

@@ -142,7 +142,7 @@ impl InputDevice {
 
 fn calculate_device_hash(dev: &Device) -> u64 {
     let mut hasher = std::hash::DefaultHasher::new();
-    (&(dev.unique_name(),dev.input_id(),dev.name())).hash(&mut hasher); // The Hash trait defines how a type should be traversed by the hash function
+    (&(dev.unique_name(),dev.input_id(),dev.name())).hash(&mut hasher);
     hasher.finish()
 }
 
