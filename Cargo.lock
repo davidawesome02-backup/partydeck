@@ -2710,6 +2710,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sevenz-rust2",
+ "sha2",
  "steamlocate",
  "tar",
  "walkdir",

@@ -77,7 +77,8 @@ By default, the build script downloads the latest releases of Goldberg Steam Emu
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `download_deps` | on | Downloads Goldberg Steam Emu and UMU Launcher from GitHub releases |
+| `download_deps` | off | Downloads Goldberg Steam Emu and UMU Launcher from GitHub releases with known good versions|
+| `download_deps_latest` | off | Downloads Goldberg Steam Emu and UMU Launcher from GitHub releases with latest available |
 | `build_gamescope` | off | Builds the mouse/keyboard gamescope fork from the submodule (requires `meson` and `ninja`) |
 
 **Build with gamescope:**
@@ -86,10 +87,10 @@ By default, the build script downloads the latest releases of Goldberg Steam Emu
 cargo build --release -F build_gamescope
 ```
 
-**Skip dependency downloads:**
+**Download known dependancies:**
 
 ```
-cargo build --release --no-default-features
+cargo build --release -F download_deps
 ```
 
 

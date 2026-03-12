@@ -29,7 +29,7 @@ jobs:
           submodules: recursive
 
       - name: Build partydeck
-        run: cargo build --release -F build_gamescope
+        run: cargo build --release -F build_gamescope -F download_deps
 
       - name: Assemble output
         run: |
