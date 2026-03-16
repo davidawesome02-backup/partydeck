@@ -132,20 +132,8 @@ impl PartyApp {
             task: None,
             current_editing_display: 0,
             current_editing_profile: None,
-            // testing_displays: vec![
-            //     Display { 
-            //         profile_list: Vec::new(), 
-            //         display_name: "Unused".to_string(), 
-            //         comp_type: DisplayCompType::Native, 
-            //         kde_split_type: DisplayCompTypeKwinSplit::None 
-            //     }
-            // ],
+            
             testing_displays: vec![
-                // vec!["testa","testab"],
-                // vec!["testb"],
-                // vec!["testc"],
-                // vec!["testd","testf","testg"],
-                // vec!["teste"],
                 vec!["1"],
                 vec!["22"],
                 vec!["333"],

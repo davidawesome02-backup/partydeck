@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2021"
 links = "gamescope_webrtc"
 
-[build-dependencies]
-cmake = "0.1.57"
+[dependencies]
+libloading = "^0.8.8"

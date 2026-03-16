@@ -9,11 +9,11 @@ use crate::util::*;
 use crate::monitor::get_monitors_errorless;
 
 use dialog::DialogBox;
-use eframe::egui::accesskit::SortDirection;
+// use eframe::egui::accesskit::SortDirection;
 use eframe::egui::{RichText, vec2};
 use eframe::egui::{self, Ui};
-use egui_extras::StripBuilder;
-use nix::libc::dev_t;
+// use egui_extras::StripBuilder;
+// use nix::libc::dev_t;
 use rfd::FileDialog;
 use std::path::PathBuf;
 

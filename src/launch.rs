@@ -94,12 +94,10 @@ pub fn launch_game(
 
 
          if let Some(webrtc_ctx) = instances[idx].webrtc_instance {
-            unsafe {
-                gamescope_webrtc::start_webrtc_streaming_thread(
-                    webrtc_ctx as *mut gamescope_webrtc::GamescopeWebrtcCtx,
-                    handle_pid
-                );
-            }
+            gamescope_webrtc::start_webrtc_streaming_thread(
+                webrtc_ctx as *mut gamescope_webrtc::GamescopeWebrtcCtx,
+                handle_pid
+            );
         }
 
         if idx < instances.len() - 1 {

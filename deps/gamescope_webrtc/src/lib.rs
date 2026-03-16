@@ -1,7 +1,9 @@
-
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
+use std::sync::OnceLock;
 use std::thread;
+
+use libloading::Library;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -12,80 +14,163 @@ pub struct GamescopeWebrtcCtx {
 
     pub ICE_offer: *const c_char,
     pub join_code: *const c_char,
-    pub WEBRTC_connection_failed: bool,
+    pub webrtc_connection_failed: bool,
 
     pub result_err: c_int,
 
     pub opaque_internal_ctx: *mut c_void,
 }
 
-extern "C" {
-    fn gamescopeWebrtc_INIT( // ALL NAMES ARE WRONG HERE FIX DAVID GPT GENERATED THEM LOL
-        create_kbm: bool,
-        create_ctrl: bool,
-    ) -> *mut GamescopeWebrtcCtx;
+macro_rules! webrtc_api {
+    ($(
+        fn $name:ident ( $($arg:ty),* ) -> $ret:ty;
+    )*) => {
+        #[allow(non_snake_case)]
+        pub struct WebrtcLib {
+            _lib: Library,
+            $(pub $name: unsafe extern "C" fn($($arg),*) -> $ret,)*
+        }
 
-    fn gamescopeWebrtc_create_webrtc(
-        ctx: *mut GamescopeWebrtcCtx,
-        fps: c_int,
-        create_code: bool,
-        code_creation_url: *mut c_char,
-    );
+        impl WebrtcLib {
+            unsafe fn load() -> Result<Self, String> {
+                println!("[webrtc] Attempting to load libgamescope-webrtc-lib.so");
 
-    fn gamescopeWebrtc_check_webrtc(
-        ctx: *mut GamescopeWebrtcCtx,
-    );
+                let lib = match Library::new("libgamescope-webrtc-lib.so") {
+                    Ok(l) => {
+                        println!("[webrtc] Loaded from system loader path");
+                        l
+                    }
+                    Err(e1) => {
+                        println!("[webrtc] Failed system lookup: {}", e1);
+                        match Library::new("./libgamescope-webrtc-lib.so") {
+                            Ok(l) => {
+                                println!("[webrtc] Loaded from current directory");
+                                l
+                            }
+                            Err(e2) => {
+                                println!("[webrtc] Failed CWD lookup: {}", e2);
+                                return Err(format!(
+                                    "Could not load libgamescope-webrtc-lib.so\nsystem loader: {}\nCWD: {}",
+                                    e1, e2
+                                ));
+                            }
+                        }
+                    }
+                };
 
-    fn gamescopeWebrtc_start_recording(
-        ctx: *mut GamescopeWebrtcCtx,
-        gamescope_pid: c_int,
-    );
+                $(
+                    let $name = match lib.get::<unsafe extern "C" fn($($arg),*) -> $ret>(
+                        concat!(stringify!($name), "\0").as_bytes()
+                    ) {
+                        Ok(sym) => {
+                            println!("[webrtc] Loaded symbol {}", stringify!($name));
+                            *sym
+                        }
+                        Err(e) => {
+                            return Err(format!(
+                                "Missing symbol {}: {}",
+                                stringify!($name),
+                                e
+                            ));
+                        }
+                    };
+                )*
+
+                println!("[webrtc] WebRTC library successfully loaded");
+
+                Ok(Self {
+                    _lib: lib,
+                    $($name,)*
+                })
+            }
+        }
+    };
 }
 
 
+webrtc_api! {
+    fn gamescopeWebrtc_INIT(bool, bool) -> *mut GamescopeWebrtcCtx;
+    fn gamescopeWebrtc_create_webrtc(*mut GamescopeWebrtcCtx, c_int, bool, *mut c_char) -> ();
+    fn gamescopeWebrtc_check_webrtc(*mut GamescopeWebrtcCtx) -> ();
+    fn gamescopeWebrtc_start_recording(*mut GamescopeWebrtcCtx, c_int) -> ();
+}
 
-pub fn start_webrtc_stream() -> *mut GamescopeWebrtcCtx {
-    println!("hi me");
+static WEBRTC_LIB: OnceLock<Option<WebrtcLib>> = OnceLock::new();
+
+
+fn get_lib() -> Option<&'static WebrtcLib> {
+    WEBRTC_LIB
+        .get_or_init(|| {
+            match unsafe { WebrtcLib::load() } {
+                Ok(lib) => {
+                    println!("[webrtc] WebRTC support ENABLED");
+                    Some(lib)
+                }
+                Err(e) => {
+                    println!("[webrtc] WebRTC support DISABLED: {}", e);
+                    None
+                }
+            }
+        })
+        .as_ref()
+}
+
+pub fn webrtc_available() -> bool {
+    get_lib().is_some()
+}
+
+pub fn start_webrtc_stream() -> Option<*mut GamescopeWebrtcCtx> {
+    let lib = get_lib()?;
+
     unsafe {
-        let context: *mut GamescopeWebrtcCtx = gamescopeWebrtc_INIT(true, false);
-        gamescopeWebrtc_create_webrtc(context, 60, true, CString::new("wss://webrtc-streaming-pages.pages.dev/websocket").expect("asd").as_ptr().cast_mut());
+        let context = (lib.gamescopeWebrtc_INIT)(true, false);
 
-        context
+        let url = CString::new("wss://webrtc-streaming-pages.pages.dev/websocket").unwrap();
+
+        (lib.gamescopeWebrtc_create_webrtc)(
+            context,
+            60,
+            true,
+            url.as_ptr().cast_mut(),
+        );
+
+        Some(context)
     }
 }
 
-pub fn check_webrtc_stream_codes(context: *mut GamescopeWebrtcCtx) -> Option<String> {
+pub fn check_webrtc_stream_codes(
+    context: *mut GamescopeWebrtcCtx,
+) -> Option<String> {
+    let lib = get_lib()?;
+
     unsafe {
-        gamescopeWebrtc_check_webrtc(context);
+        (lib.gamescopeWebrtc_check_webrtc)(context);
+
         if !(*context).join_code.is_null() {
             if let Ok(a) = CStr::from_ptr((*context).join_code).to_str() {
                 return Some(a.to_string());
             }
         }
+
         None
     }
 }
 
-pub fn check_webrtc_stream_created_devices(context: *mut GamescopeWebrtcCtx) -> Option<String> {
-    unsafe {
-        if !(*context).kbm_path.is_null() {
-            if let Ok(a) = CStr::from_ptr((*context).kbm_path).to_str() {
-                return Some(a.to_string());
-            }
-        }
-        None
-    }
-}
+pub fn start_webrtc_streaming_thread(
+    context: *mut GamescopeWebrtcCtx,
+    pid: u32,
+) -> Option<thread::JoinHandle<()>> {
+    let lib = get_lib()?;
 
-
-
-pub fn start_webrtc_streaming_thread(context: *mut GamescopeWebrtcCtx, pid: u32) -> thread::JoinHandle<()> {
     let ctx_adr = context as usize;
-    thread::spawn(move || {
+    let start_recording = lib.gamescopeWebrtc_start_recording;
+
+    Some(thread::spawn(move || {
         unsafe {
-            std::thread::sleep(std::time::Duration::from_secs_f64(5.0));
+            std::thread::sleep(std::time::Duration::from_secs(5));
+
             let context = ctx_adr as *mut GamescopeWebrtcCtx;
-            gamescopeWebrtc_start_recording(context, pid as i32);
+            (start_recording)(context, pid as i32);
         }
-    })
+    }))
 }

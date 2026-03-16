@@ -16,7 +16,7 @@ use crate::paths::PATH_PARTY;
 use crate::profiles::remove_guest_profiles;
 use crate::util::*;
 
-use gamescope_webrtc;
+// use gamescope_webrtc;
 
 fn main() -> eframe::Result {
     // let context= gamescope_webrtc::start_webrtc_stream();
