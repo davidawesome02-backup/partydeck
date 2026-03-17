@@ -95,7 +95,7 @@ pub fn launch_game(
 
          if let Some(webrtc_ctx) = instances[idx].webrtc_instance {
             gamescope_webrtc::start_webrtc_streaming_thread(
-                webrtc_ctx as *mut gamescope_webrtc::GamescopeWebrtcCtx,
+                webrtc_ctx as *mut gamescope_webrtc::gamescope_webrtc_ctx,
                 handle_pid
             );
         }

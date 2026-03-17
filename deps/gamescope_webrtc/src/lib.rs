@@ -8,7 +8,7 @@ use libloading::Library;
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 #[allow(non_snake_case)]
-pub struct GamescopeWebrtcCtx {
+pub struct gamescope_webrtc_ctx {
     pub crl_path: *const c_char,
     pub kbm_path: *const c_char,
 
@@ -89,10 +89,10 @@ macro_rules! webrtc_api {
 
 
 webrtc_api! {
-    fn gamescopeWebrtc_INIT(bool, bool) -> *mut GamescopeWebrtcCtx;
-    fn gamescopeWebrtc_create_webrtc(*mut GamescopeWebrtcCtx, c_int, bool, *mut c_char) -> ();
-    fn gamescopeWebrtc_check_webrtc(*mut GamescopeWebrtcCtx) -> ();
-    fn gamescopeWebrtc_start_recording(*mut GamescopeWebrtcCtx, c_int) -> ();
+    fn gamescope_webrtc_init(bool, bool) -> *mut gamescope_webrtc_ctx;
+    fn gamescope_webrtc_create_webrtc(*mut gamescope_webrtc_ctx, c_int, bool, *mut c_char) -> ();
+    fn gamescope_webrtc_check_webrtc(*mut gamescope_webrtc_ctx) -> ();
+    fn gamescope_webrtc_start_recording(*mut gamescope_webrtc_ctx, c_int) -> ();
 }
 
 static WEBRTC_LIB: OnceLock<Option<WebrtcLib>> = OnceLock::new();
@@ -119,15 +119,15 @@ pub fn webrtc_available() -> bool {
     get_lib().is_some()
 }
 
-pub fn start_webrtc_stream() -> Option<*mut GamescopeWebrtcCtx> {
+pub fn start_webrtc_stream() -> Option<*mut gamescope_webrtc_ctx> {
     let lib = get_lib()?;
 
     unsafe {
-        let context = (lib.gamescopeWebrtc_INIT)(true, false);
+        let context = (lib.gamescope_webrtc_init)(true, false);
 
         let url = CString::new("wss://webrtc-streaming-pages.pages.dev/websocket").unwrap();
 
-        (lib.gamescopeWebrtc_create_webrtc)(
+        (lib.gamescope_webrtc_create_webrtc)(
             context,
             60,
             true,
@@ -139,12 +139,12 @@ pub fn start_webrtc_stream() -> Option<*mut GamescopeWebrtcCtx> {
 }
 
 pub fn check_webrtc_stream_codes(
-    context: *mut GamescopeWebrtcCtx,
+    context: *mut gamescope_webrtc_ctx,
 ) -> Option<String> {
     let lib = get_lib()?;
 
     unsafe {
-        (lib.gamescopeWebrtc_check_webrtc)(context);
+        (lib.gamescope_webrtc_check_webrtc)(context);
 
         if !(*context).join_code.is_null() {
             if let Ok(a) = CStr::from_ptr((*context).join_code).to_str() {
@@ -157,19 +157,19 @@ pub fn check_webrtc_stream_codes(
 }
 
 pub fn start_webrtc_streaming_thread(
-    context: *mut GamescopeWebrtcCtx,
+    context: *mut gamescope_webrtc_ctx,
     pid: u32,
 ) -> Option<thread::JoinHandle<()>> {
     let lib = get_lib()?;
 
     let ctx_adr = context as usize;
-    let start_recording = lib.gamescopeWebrtc_start_recording;
+    let start_recording = lib.gamescope_webrtc_start_recording;
 
     Some(thread::spawn(move || {
         unsafe {
             std::thread::sleep(std::time::Duration::from_secs(5));
 
-            let context = ctx_adr as *mut GamescopeWebrtcCtx;
+            let context = ctx_adr as *mut gamescope_webrtc_ctx;
             (start_recording)(context, pid as i32);
         }
     }))
