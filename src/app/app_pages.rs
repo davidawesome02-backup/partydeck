@@ -1,6 +1,7 @@
 use super::app::{MenuPage, PartyApp, SettingsPage};
 use super::config::*;
-use crate::handler::*;
+use crate::layout_manager::LayoutWindows;
+use crate::{handler::*, layout_manager};
 use crate::input::*;
 use crate::monitor::get_monitors_errorless;
 use crate::paths::*;
@@ -10,6 +11,7 @@ use crate::util::*;
 use dialog::DialogBox;
 use eframe::egui::RichText;
 use eframe::egui::{self, Ui};
+use eframe::glow::MAX_HEIGHT;
 use rfd::FileDialog;
 use std::path::PathBuf;
 
@@ -374,10 +376,162 @@ impl PartyApp {
             });
     }
 
+        // See origonal dnd impl
+    pub fn dnd_drag_source_cust<Payload, R>(
+        &mut self,
+        self_u: &mut egui::Ui,
+        id: egui::Id,
+        payload: Payload,
+        add_contents: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> egui::InnerResponse<R>
+    where
+        Payload: std::any::Any + Send + Sync,
+    {
+        let is_being_dragged = self_u.ctx().is_being_dragged(id);
+
+        if is_being_dragged {
+            egui::DragAndDrop::set_payload(self_u.ctx(), payload);
+
+            let layer_id = egui::LayerId::new(egui::Order::Tooltip, id);
+            let egui::InnerResponse { inner, response } =
+                self_u.scope_builder(egui::UiBuilder::new().layer_id(layer_id), add_contents);
+
+            if let Some(pointer_pos) = self_u.ctx().pointer_interact_pos() {
+                let delta = pointer_pos - response.rect.left_center() - egui::vec2(10.0, 0.0); // Manual correction factor
+                self_u.ctx()
+                    .transform_layer_shapes(layer_id, egui::emath::TSTransform::from_translation(delta));
+            }
+
+            egui::InnerResponse::new(inner, response)
+        } else {
+            self_u.scope(add_contents)
+        }
+    }
+
     pub fn display_page_instances(&mut self, ui: &mut Ui) {
+
         ui.heading("Instances");
         ui.separator();
+        
+      
 
+        egui::TopBottomPanel::bottom(ui.next_auto_id())
+            .resizable(false)
+            .exact_height(100.0)
+            .show_separator_line(false)
+            .frame(egui::Frame::NONE)
+            .show_inside(ui, |ui| {
+                ui.add_space(3.0); // Hack to make it actualy centered (calculated using the 6px separator line default height)
+                ui.separator();
+                ui.label("bottom text")
+            }
+        );
+
+        ui.centered_and_justified(|ui| {
+        egui::Frame::NONE.fill(egui::Color32::PURPLE).inner_margin(2.0).show(ui, |ui| {
+            
+            let aspect_ratio = 16.0/9.0;
+            let height = (ui.available_width()/aspect_ratio).min(ui.available_height() as f32);
+            // 1 being added here just so if the aspect ratios of the screen and game layout dont conflict due to rounding errs
+            let width = height*aspect_ratio + 1.0; 
+        
+            ui.set_height(height);
+            ui.set_width(width);
+
+            
+            let current_layout = layout_manager::GameLayout{
+                reverse_direction: true,
+                ideal_ratio: 16.0/9.0,
+            };
+
+            let top_left_cursor = ui.cursor().left_top().to_vec2();
+
+            // Currently using size *100 to get more exact subpixel sizes - THIS ASSUMES HANDLERS ARE FINE WITH THAT. In the future, should just use the display res.
+            let window_laid_out = current_layout.layout(10, (width*100.0) as u32, (height*100.0) as u32);
+            for i in 0..window_laid_out.len() {
+                let wind_pos = window_laid_out.get(i).unwrap();
+
+                let drop_rect = egui::Rect::from_min_size(
+                    egui::pos2(
+                        wind_pos.x as f32 / 100.0,
+                        wind_pos.y as f32 / 100.0,
+                    )+top_left_cursor,
+                    egui::Vec2::new(
+                        wind_pos.w as f32 / 100.0,
+                        wind_pos.h as f32 / 100.0
+                    ),
+                );
+
+
+                let _ = ui.scope_builder(
+                    egui::UiBuilder::new()
+                        .max_rect(drop_rect)
+                        .sense(egui::Sense::hover())
+                        .layout(egui::Layout::top_down(egui::Align::LEFT)),
+                    |ui| {
+                        ui.set_width(drop_rect.width());
+                        ui.set_height(drop_rect.height());
+
+                        // Set transparent inactive fill to avoid color override
+                        ui.visuals_mut().widgets.inactive.bg_fill = egui::Color32::from_gray(20);//egui::Color32::from_rgb(59, 68, 97);
+                        
+                        let frame = egui::Frame::default()
+                            .inner_margin(0.0)
+                            .outer_margin(0.0)
+                            .stroke(egui::Stroke::new(2.0, egui::Color32::GRAY));
+                        
+                        ui.dnd_drop_zone::<i32, ()>(frame, |ui| {
+
+                            let id: eframe::egui::Id = ui.make_persistent_id(format!("hi{i}"));
+                            
+                            self.dnd_drag_source_cust(ui, id, 45, |ui| {
+                            let visuals = &ui.visuals().widgets.inactive;
+                            egui::Frame::NONE
+                                .fill(visuals.bg_fill)
+                                .stroke(visuals.bg_stroke)
+                                .corner_radius(visuals.corner_radius)
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.style_mut().visuals.widgets.inactive.bg_fill = egui::Color32::BLUE;
+                                        ui.style_mut().spacing.item_spacing.x = 3.0;
+
+                                        let test = ui.button("Ｓ").on_hover_text("Move handle");
+                                        ui.interact(test.rect, id, egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
+                                        ui.label(format!("hi {i}"))
+                                    });
+                                });
+                            });
+                            ui.set_width(ui.available_size().x);
+                            ui.set_height(ui.available_size().y);
+                            
+                        })
+                    },
+                );
+            };
+        });
+        });
+
+
+        // ui.set_height(ui.available_height());
+        // ui.horizontal(|ui| {
+        //     ui.set_height(ui.available_height());
+            
+        //     // let dnd_frame: egui::Frame = egui::Frame::group(ui.style()).inner_margin(0); 
+        //     // dnd_frame.show(ui, |ui| {
+        //     //     let visual_data = ui.visuals_mut();
+        //     //     visual_data.widgets.inactive.bg_fill = egui::Color32::RED;
+        //     // })
+        //     for i in 1..20 {
+        //         ui.vertical(|ui| {
+        //             for o in 1..20 {
+        //                 ui.button("hi");
+        //             };
+        //         });
+            
+        //     }
+        // });
+
+        /* 
         ui.horizontal(|ui| {
             ui.add(
                 egui::Image::new(egui::include_image!("../../res/BTN_SOUTH.png")).max_height(12.0),
@@ -486,7 +640,7 @@ impl PartyApp {
                 });
                 ui.separator();
             });
-        }
+        }*/
     }
 
     pub fn display_settings_general(&mut self, ui: &mut Ui) {

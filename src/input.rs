@@ -1,3 +1,5 @@
+use std::{hash::{Hash, Hasher}, sync::OnceLock};
+
 use crate::app::PadFilterType;
 
 use evdev::*;
@@ -41,6 +43,7 @@ pub struct InputDevice {
     path: String,
     dev: Device,
     enabled: bool,
+    hash: std::sync::OnceLock<u64>,
     device_type: DeviceType,
     has_button_held: bool,
 }
@@ -70,6 +73,13 @@ impl InputDevice {
     }
     pub fn enabled(&self) -> bool {
         self.enabled
+    }
+    pub fn hash(&self) -> u64 {
+        *self.hash.get_or_init(|| {
+            let mut hasher = std::hash::DefaultHasher::new();
+            (&(self.dev.unique_name(),self.dev.input_id(),self.dev.name())).hash(&mut hasher);
+            hasher.finish()
+        })
     }
     pub fn device_type(&self) -> DeviceType {
         self.device_type
@@ -177,6 +187,7 @@ pub fn scan_input_devices(filter: &PadFilterType) -> Vec<InputDevice> {
                 path: dev.0.to_str().unwrap().to_string(),
                 dev: dev.1,
                 enabled,
+                hash: OnceLock::new(),
                 device_type,
                 has_button_held: false,
             });
