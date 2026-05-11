@@ -295,3 +295,30 @@ impl OsFmt for PathBuf {
     }
 }
 
+
+pub fn command_to_bash_script(cmd: &Command) -> String {
+    let mut script = String::new();
+    
+    // Environment variables (explicitly set)
+    for (key, value) in cmd.get_envs() {
+        if let Some(value) = value {
+            script.push_str(&key.to_string_lossy());
+            script.push('=');
+            script.push_str(&shell_escape(&value.to_string_lossy()));
+            script.push(' ');
+        }
+    }
+    
+    // Command and arguments
+    script.push_str(&shell_escape(&cmd.get_program().to_string_lossy()));
+    for arg in cmd.get_args() {
+        script.push(' ');
+        script.push_str(&shell_escape(&arg.to_string_lossy()));
+    }
+    
+    script
+}
+
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace("'", "'\\''"))
+}

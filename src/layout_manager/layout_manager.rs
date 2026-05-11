@@ -5,6 +5,8 @@ use std::path::PathBuf;
 
 use std::os::fd::{AsFd, IntoRawFd};
 use std::io::Read;
+use std::process::Child;
+use std::thread::spawn;
 use nix::fcntl;
 use nix::poll;
 use nix::unistd;
@@ -31,6 +33,7 @@ use crate::layout_manager::wayland_client_code::wlr_output_mgmt_unstable_v1::zwl
 use crate::layout_manager::wayland_client_code::wlr_output_mgmt_unstable_v1::zwlr_output_mode_v1::ZwlrOutputModeV1;
 use crate::layout_manager::wlr_output_mgmt_unstable_v1::zwlr_output_configuration_v1;
 use crate::layout_manager::wlr_output_mgmt_unstable_v1::zwlr_output_configuration_v1::ZwlrOutputConfigurationV1;
+use crate::util::command_to_bash_script;
 
 use super::super::get_monitors_errorless;
 use super::super::monitor::Monitor;
@@ -458,8 +461,8 @@ pub fn kwin_dbus_unload_script() -> Result<(), Box<dyn Error>> {
 
 pub fn spawn_comp_and_get_display(
     comp_executable: &str,
-    primary_monitor: Monitor,
-) -> Option<(String, String, Monitor, Pid)> {
+    primary_monitor: &Monitor,
+) -> Option<(String, String, Monitor, Child)> {
     let base_program_buf = env::current_exe().expect("Failed to get partydeck executable");
     let base_program = base_program_buf.to_str()?;
 
@@ -528,17 +531,17 @@ pub fn spawn_comp_and_get_display(
         }
     }
 
-    let child_pid;
-    match cmd.spawn() {
-        Ok(child) => child_pid = Pid::from_raw((child.id()) as i32),
-        Err(e) => {
-            eprintln!(
-                "[partydeck] Failed to start COMP ({}): {}",
-                comp_executable, e
-            );
-            return None;
-        }
+    println!("[partydeck] Starting compositor: {}", command_to_bash_script(&cmd));
+
+    let spawn_output = cmd.spawn();
+    if let Err(e) = spawn_output {
+        eprintln!(
+            "[partydeck] Failed to start COMP ({}): {}",
+            comp_executable, e
+        );
+        return None;
     }
+    let Ok(child_proc) = spawn_output else { return None };
 
     let mut fds = [poll::PollFd::new(read_fd.as_fd(), poll::PollFlags::POLLIN)];
     let res = poll::poll(&mut fds, 2000 as u16).unwrap_or(0);
@@ -582,6 +585,6 @@ pub fn spawn_comp_and_get_display(
         way_disp.to_string(),
         x11_disp.to_string(),
         remote_monitor,
-        child_pid,
+        child_proc
     ));
 }

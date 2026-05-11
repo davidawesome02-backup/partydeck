@@ -65,7 +65,7 @@ impl PartyApp {
 
             if ui.button("🖵 🔄").clicked() {
                 self.instances.clear();
-                self.monitors = get_monitors_errorless();
+                self.sys_monitors = get_monitors_errorless();
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

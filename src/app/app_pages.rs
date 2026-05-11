@@ -334,7 +334,7 @@ impl PartyApp {
                 } else {
                     self.instances.clear();
                     self.input_devices = scan_input_devices(&self.options.pad_filter_type);
-                    self.monitors = get_monitors_errorless();
+                    self.sys_monitors = get_monitors_errorless();
                     self.profiles = scan_profiles(true);
                     self.instance_add_dev = None;
                     self.cur_page = MenuPage::Instances;
@@ -397,7 +397,7 @@ impl PartyApp {
                 self_u.scope_builder(egui::UiBuilder::new().layer_id(layer_id), add_contents);
 
             if let Some(pointer_pos) = self_u.ctx().pointer_interact_pos() {
-                let delta = pointer_pos - response.rect.left_center() - egui::vec2(10.0, 0.0); // Manual correction factor
+                let delta = pointer_pos - response.rect.left_top() - egui::vec2(10.0, 10.0); // Manual correction factor
                 self_u.ctx()
                     .transform_layer_shapes(layer_id, egui::emath::TSTransform::from_translation(delta));
             }
@@ -428,37 +428,47 @@ impl PartyApp {
         );
 
         ui.centered_and_justified(|ui| {
-        egui::Frame::NONE.fill(egui::Color32::PURPLE).inner_margin(2.0).show(ui, |ui| {
+        egui::Frame::NONE
+        .fill(egui::Color32::PURPLE)
+        .inner_margin(2.0)
+        .corner_radius(2)
+        .show(ui, |ui| {
+
+
+            let target_res = (1920, 1080);
             
-            let aspect_ratio = 16.0/9.0;
+            let aspect_ratio = (target_res.0 as f32)/(target_res.1 as f32);
             let height = (ui.available_width()/aspect_ratio).min(ui.available_height() as f32);
-            // 1 being added here just so if the aspect ratios of the screen and game layout dont conflict due to rounding errs
-            let width = height*aspect_ratio + 1.0; 
+            let width = height*aspect_ratio; 
         
             ui.set_height(height);
             ui.set_width(width);
 
             
-            let current_layout = layout_manager::GameLayout{
-                reverse_direction: true,
-                ideal_ratio: 16.0/9.0,
+            // let current_layout = layout_manager::GameLayout{
+            //     reverse_direction: false,
+            //     ideal_ratio: 16.0/9.0,
+            // };
+
+
+            let current_layout = layout_manager::FlatLayout{
+                split_dir_width: true,
             };
 
             let top_left_cursor = ui.cursor().left_top().to_vec2();
 
-            // Currently using size *100 to get more exact subpixel sizes - THIS ASSUMES HANDLERS ARE FINE WITH THAT. In the future, should just use the display res.
-            let window_laid_out = current_layout.layout(10, (width*100.0) as u32, (height*100.0) as u32);
-            for i in 0..window_laid_out.len() {
-                let wind_pos = window_laid_out.get(i).unwrap();
+            let window_laid_out = current_layout.layout(10, target_res.0, target_res.1);
+            for idx_instance in 0..window_laid_out.len() {
+                let wind_pos = window_laid_out.get(idx_instance).unwrap();
 
                 let drop_rect = egui::Rect::from_min_size(
                     egui::pos2(
-                        wind_pos.x as f32 / 100.0,
-                        wind_pos.y as f32 / 100.0,
+                        (wind_pos.x as f32) * width / (target_res.0 as f32),
+                        (wind_pos.y as f32) * height / (target_res.1 as f32),
                     )+top_left_cursor,
                     egui::Vec2::new(
-                        wind_pos.w as f32 / 100.0,
-                        wind_pos.h as f32 / 100.0
+                        (wind_pos.w as f32) * width / (target_res.0 as f32),
+                        (wind_pos.h as f32) * height / (target_res.1 as f32)
                     ),
                 );
 
@@ -472,32 +482,30 @@ impl PartyApp {
                         ui.set_width(drop_rect.width());
                         ui.set_height(drop_rect.height());
 
-                        // Set transparent inactive fill to avoid color override
-                        ui.visuals_mut().widgets.inactive.bg_fill = egui::Color32::from_gray(20);//egui::Color32::from_rgb(59, 68, 97);
-                        
+
                         let frame = egui::Frame::default()
-                            .inner_margin(0.0)
-                            .outer_margin(0.0)
+                            .corner_radius(2)
                             .stroke(egui::Stroke::new(2.0, egui::Color32::GRAY));
                         
                         ui.dnd_drop_zone::<i32, ()>(frame, |ui| {
 
-                            let id: eframe::egui::Id = ui.make_persistent_id(format!("hi{i}"));
+                            // Should be unique, when adding many displays, add the display to the salt here.
+                            let dnd_id: eframe::egui::Id = ui.make_persistent_id(format!("dnd_instance-{idx_instance}"));
                             
-                            self.dnd_drag_source_cust(ui, id, 45, |ui| {
-                            let visuals = &ui.visuals().widgets.inactive;
+                            self.dnd_drag_source_cust(ui, dnd_id, idx_instance as i32, |ui| {
                             egui::Frame::NONE
-                                .fill(visuals.bg_fill)
-                                .stroke(visuals.bg_stroke)
-                                .corner_radius(visuals.corner_radius)
+                                .fill(egui::Color32::from_gray(20))
+                                .corner_radius(2)
                                 .show(ui, |ui| {
+                                    ui.set_width(ui.available_size().x);
+                                    ui.set_height(ui.available_size().y);
                                     ui.horizontal(|ui| {
-                                        ui.style_mut().visuals.widgets.inactive.bg_fill = egui::Color32::BLUE;
+                                        
                                         ui.style_mut().spacing.item_spacing.x = 3.0;
 
                                         let test = ui.button("Ｓ").on_hover_text("Move handle");
-                                        ui.interact(test.rect, id, egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
-                                        ui.label(format!("hi {i}"))
+                                        ui.interact(test.rect, dnd_id, egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
+                                        ui.label(format!("Inst: {idx_instance}"))
                                     });
                                 });
                             });

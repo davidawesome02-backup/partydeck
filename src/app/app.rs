@@ -39,11 +39,13 @@ pub struct PartyApp {
     pub settings_page: SettingsPage,
     pub infotext: String,
 
-    pub monitors: Vec<Monitor>,
+    pub sys_monitors: Vec<Monitor>,
     pub input_devices: Vec<InputDevice>,
-    pub instances: Vec<Instance>,
-    pub instance_add_dev: Option<usize>,
     pub profiles: Vec<String>,
+
+    pub instance_add_dev: Option<usize>,
+    
+    pub launch_displays: Vec<LaunchDisplay>,
 
     pub handlers: Vec<Handler>,
     pub selected_handler: usize,
@@ -82,9 +84,8 @@ impl PartyApp {
             cur_page,
             settings_page: SettingsPage::General,
             infotext: String::new(),
-            monitors,
+            sys_monitors: monitors,
             input_devices,
-            instances: Vec::new(),
             instance_add_dev: None,
             handlers,
             selected_handler: 0,
@@ -94,6 +95,7 @@ impl PartyApp {
             loading_msg: None,
             loading_since: None,
             task: None,
+            launch_displays: vec![],
         };
 
         if app.options.check_for_updates {
@@ -409,32 +411,22 @@ impl PartyApp {
     }
 
     pub fn prepare_game_launch(&mut self) {
-        if self.options.gamescope_sdl_backend {
-            set_instance_resolutions_multimonitor(
-                &mut self.instances,
-                &self.monitors,
-                &self.options,
-            );
-        } else {
-            set_instance_resolutions(&mut self.instances, &self.monitors[0], &self.options, false);
-        }
-        set_instance_names(&mut self.instances, &self.profiles);
-
         let handler = if let Some(h) = self.handler_lite.clone() {
             h
         } else {
             cur_handler!(self).to_owned()
         };
 
-        let mut instances = self.instances.clone();
-        let dev_infos: Vec<DeviceInfo> = self.input_devices.iter().map(|p| p.info()).collect();
+        // let mut instances = self.instances.clone();
+        // let dev_infos: Vec<DeviceInfo> = self.input_devices.iter().map(|p| p.info()).collect();
+        // self.input_devices
 
         let cfg = self.options.clone();
         let _ = save_cfg(&cfg);
 
         self.cur_page = MenuPage::Home;
 
-        let clone_monitor = self.monitors[0].clone();
+        // let clone_monitor = self.sys_monitors[0].clone();
 
         self.spawn_task(
             "Launching...\n\nDon't press any buttons or move any analog sticks or mice.",
@@ -456,7 +448,8 @@ impl PartyApp {
                     return;
                 }
                 if let Err(err) =
-                    launch_game(&handler, &dev_infos, &mut instances, &cfg, clone_monitor)
+                    launch_game(h, &self.input_devices, &mut self.launch_displays, &cfg, self.sys_monitors);
+                    // launch_game(&handler, self.input_devices, &mut instances, &cfg, self.sys_monitors)
                 {
                     println!("[partydeck] Error launching instances: {}", err);
                     msg("Launch Error", &format!("{err}"));

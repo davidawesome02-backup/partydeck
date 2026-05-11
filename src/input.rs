@@ -39,11 +39,13 @@ pub struct DeviceInfo {
     pub device_type: DeviceType,
 }
 
+pub type DeviceHash = u64;
+
 pub struct InputDevice {
     path: String,
     dev: Device,
     enabled: bool,
-    hash: std::sync::OnceLock<u64>,
+    hash: std::sync::OnceLock<DeviceHash>,
     device_type: DeviceType,
     has_button_held: bool,
 }
@@ -74,7 +76,7 @@ impl InputDevice {
     pub fn enabled(&self) -> bool {
         self.enabled
     }
-    pub fn hash(&self) -> u64 {
+    pub fn hash(&self) -> DeviceHash {
         *self.hash.get_or_init(|| {
             let mut hasher = std::hash::DefaultHasher::new();
             (&(self.dev.unique_name(),self.dev.input_id(),self.dev.name())).hash(&mut hasher);
@@ -86,13 +88,6 @@ impl InputDevice {
     }
     pub fn has_button_held(&self) -> bool {
         self.has_button_held
-    }
-    pub fn info(&self) -> DeviceInfo {
-        DeviceInfo {
-            path: self.path().to_string(),
-            enabled: self.enabled(),
-            device_type: self.device_type(),
-        }
     }
     pub fn poll(&mut self) -> Option<PadButton> {
         let mut btn: Option<PadButton> = None;

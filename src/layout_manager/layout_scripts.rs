@@ -1,3 +1,5 @@
+use eframe::egui;
+
 pub struct WindowPostion {
     pub x: u32,
     pub y: u32,
@@ -6,7 +8,8 @@ pub struct WindowPostion {
 }
 
 pub trait LayoutWindows {
-    fn layout(&self, count: u32, width: u32, height: u32) -> Vec<WindowPostion>;
+    fn layout(&self, window_count: u32, display_width: u32, display_height: u32) -> Vec<WindowPostion>;
+    fn display_editor(&self, ui: egui::Ui);
 }
 
 pub struct GameLayout {
@@ -79,11 +82,15 @@ impl LayoutWindows for GameLayout {
 
         windows_output
     }
+    fn display_editor(&self, ui: egui::Ui) {
+        
+    }
 }
 
 
+#[derive(Clone)]
 pub struct FlatLayout {
-    split_dir_width: bool, // default height.
+    pub split_dir_width: bool, // default height.
 }
 impl LayoutWindows for FlatLayout {
     fn layout(&self, window_count: u32, display_width: u32, display_height: u32) -> Vec<WindowPostion> {
@@ -95,12 +102,12 @@ impl LayoutWindows for FlatLayout {
                 match self.split_dir_width {
                     true => WindowPostion{
                         x: i * display_width / window_count,
-                        y: display_height,
+                        y: 0,
                         w: display_width / window_count,
                         h: display_height,
                     },
                     false => WindowPostion{
-                        x: display_width,
+                        x: 0,
                         y: i * display_height / window_count,
                         w: display_width,
                         h: display_height / window_count,
@@ -110,5 +117,8 @@ impl LayoutWindows for FlatLayout {
         }
 
         windows_output
+    }
+    fn display_editor(&self, ui: egui::Ui) {
+        
     }
 }
