@@ -246,7 +246,6 @@ impl PartyApp {
                 Some(PadButton::SelectBtn) => key = Some(Key::Tab),
                 Some(PadButton::StartBtn) => {
                     if self.cur_page == MenuPage::Game {
-                        self.instances.clear();
                         self.profiles = scan_profiles(true);
                         self.instance_add_dev = None;
                         self.cur_page = MenuPage::Instances;
@@ -299,35 +298,38 @@ impl PartyApp {
                         continue;
                     }
 
-                    match self.instance_add_dev {
-                        Some(inst) => {
-                            // Add the device in the instance only if it's not already there
-                            if !self.is_device_in_instance(inst, i) {
-                                self.instance_add_dev = None;
-                                self.instances[inst].devices.push(i);
-                            } else {
-                                continue;
-                            }
-                        }
-                        None => {
-                            self.instances.push(Instance {
-                                devices: vec![i],
-                                profname: String::new(),
-                                profselection: 0,
-                                monitor: 0,
-                                width: 0,
-                                height: 0,
-                            });
-                        }
-                    }
+                    // TODO: REPLACE
+                    // match self.instance_add_dev {
+                    //     Some(inst) => {
+                    //         // Add the device in the instance only if it's not already there
+                    //         if !self.is_device_in_instance(inst, i) {
+                    //             self.instance_add_dev = None;
+                    //             self.instances[inst].devices.push(i);
+                    //         } else {
+                    //             continue;
+                    //         }
+                    //     }
+                    //     None => {
+                    //         self.instances.push(Instance {
+                    //             devices: vec![i],
+                    //             profname: String::new(),
+                    //             profselection: 0,
+                    //             monitor: 0,
+                    //             width: 0,
+                    //             height: 0,
+                    //         });
+                    //     }
+                    // }
                 }
                 Some(PadButton::BBtn) | Some(PadButton::XKey) => {
                     if self.instance_add_dev != None {
                         self.instance_add_dev = None;
                     } else if self.is_device_in_any_instance(i) {
                         self.remove_device(i);
-                    } else if self.instances.len() < 1 {
-                        self.cur_page = MenuPage::Game;
+                    // TODO: REPLACE
+
+                    // } else if self.instances.len() < 1 {
+                    //     self.cur_page = MenuPage::Game;
                     }
                 }
                 Some(PadButton::YBtn) | Some(PadButton::AKey) => {
@@ -338,9 +340,11 @@ impl PartyApp {
                     }
                 }
                 Some(PadButton::StartBtn) => {
-                    if self.instances.len() > 0 && self.is_device_in_any_instance(i) {
-                        self.prepare_game_launch();
-                    }
+                    // TODO: REPLACE
+
+                    // if self.instances.len() > 0 && self.is_device_in_any_instance(i) {
+                    //     self.prepare_game_launch();
+                    // }
                 }
                 _ => {}
             }
@@ -349,68 +353,76 @@ impl PartyApp {
     }
 
     fn is_device_in_any_instance(&self, dev: usize) -> bool {
-        for instance in &self.instances {
-            if instance.devices.contains(&dev) {
-                return true;
-            }
-        }
+        // TODO: REPLACE
+        // for instance in &self.instances {
+        //     if instance.devices.contains(&dev) {
+        //         return true;
+        //     }
+        // }
         false
     }
 
     fn is_device_in_instance(&self, instance_index: usize, dev: usize) -> bool {
-        if self.instances[instance_index].devices.contains(&dev) {
-            return true;
-        }
+        // TODO: REPLACE
+        // if self.instances[instance_index].devices.contains(&dev) {
+        //     return true;
+        // }
         false
     }
 
     fn find_device_in_instance(&mut self, dev: usize) -> Option<(usize, usize)> {
-        for (i, instance) in self.instances.iter().enumerate() {
-            for (d, device) in instance.devices.iter().enumerate() {
-                if device == &dev {
-                    return Some((i, d));
-                }
-            }
-        }
+        // TODO: REPLACE
+
+        // for (i, instance) in self.instances.iter().enumerate() {
+        //     for (d, device) in instance.devices.iter().enumerate() {
+        //         if device == &dev {
+        //             return Some((i, d));
+        //         }
+        //     }
+        // }
         None
     }
 
     fn find_device_in_instance_from_end(&mut self, dev: usize) -> Option<(usize, usize)> {
-        for (i, instance) in self.instances.iter().enumerate().rev() {
-            for (d, device) in instance.devices.iter().enumerate() {
-                if device == &dev {
-                    return Some((i, d));
-                }
-            }
-        }
+        // TODO: REPLACE
+        // for (i, instance) in self.instances.iter().enumerate().rev() {
+        //     for (d, device) in instance.devices.iter().enumerate() {
+        //         if device == &dev {
+        //             return Some((i, d));
+        //         }
+        //     }
+        // }
         None
     }
 
     pub fn remove_device(&mut self, dev: usize) {
-        if let Some((instance_index, device_index)) = self.find_device_in_instance_from_end(dev) {
-            self.instances[instance_index].devices.remove(device_index);
-            if self.instances[instance_index].devices.is_empty() {
-                self.instances.remove(instance_index);
-            }
-        }
+        // TODO: REPLACE
+        
+        // if let Some((instance_index, device_index)) = self.find_device_in_instance_from_end(dev) {
+        //     self.instances[instance_index].devices.remove(device_index);
+        //     if self.instances[instance_index].devices.is_empty() {
+        //         self.instances.remove(instance_index);
+        //     }
+        // }
     }
 
     pub fn remove_device_instance(&mut self, instance_index: usize, dev: usize) {
-        let device_index = self.instances[instance_index]
-            .devices
-            .iter()
-            .position(|device| device == &dev);
+        // TODO: REPLACE
+        // let device_index = self.instances[instance_index]
+        //     .devices
+        //     .iter()
+        //     .position(|device| device == &dev);
 
-        if let Some(d) = device_index {
-            self.instances[instance_index].devices.remove(d);
+        // if let Some(d) = device_index {
+        //     self.instances[instance_index].devices.remove(d);
 
-            if self.instances[instance_index].devices.is_empty() {
-                self.instances.remove(instance_index);
-            }
-        }
+        //     if self.instances[instance_index].devices.is_empty() {
+        //         self.instances.remove(instance_index);
+        //     }
+        // }
     }
 
-    pub fn prepare_game_launch(&mut self) {
+    pub fn prepare_game_launch(&'static mut self ) {
         let handler = if let Some(h) = self.handler_lite.clone() {
             h
         } else {
@@ -428,27 +440,40 @@ impl PartyApp {
 
         // let clone_monitor = self.sys_monitors[0].clone();
 
+            // Clone these BEFORE the closure    
+        // let input_devices = std::sync::Arc::new(&self.input_devices);
+        // // let input_devices = self.input_devices.clone();    
+        // // let mut launch_displays = self.launch_displays.clone();
+        // // let launch_displays = Arc::new(std::cell::Mutex::new(&mut self.launch_displays));
+        // let launch_displays = Arc::new(std::sync::Mutex::new(&mut self.launch_displays));
+        // let sys_monitors = self.sys_monitors.clone();
+
         self.spawn_task(
             "Launching...\n\nDon't press any buttons or move any analog sticks or mice.",
             move || {
                 sleep(std::time::Duration::from_secs_f32(1.5));
 
-                if let Err(err) = setup_profiles(&handler, &instances) {
-                    println!("[partydeck] Error mounting game directories: {}", err);
-                    msg("Failed mounting game directories", &format!("{err}"));
-                    return;
-                }
-                if handler.is_saved_handler()
-                    && !cfg.disable_mount_gamedirs
-                    && cfg.profile_unique_dirs
-                    && let Err(err) = fuse_overlayfs_mount_gamedirs(&handler, &instances)
-                {
-                    println!("[partydeck] Error mounting game directories: {}", err);
-                    msg("Failed mounting game directories", &format!("{err}"));
-                    return;
-                }
+                // let flattened_instances = self.launch_displays.iter().flat_map(
+                //     |display| display.instances 
+                // ).collect();
+
+                // if let Err(err) = setup_profiles(&handler, &flattened_instances) {
+                //     println!("[partydeck] Error mounting game directories: {}", err);
+                //     msg("Failed mounting game directories", &format!("{err}"));
+                //     return;
+                // }
+                // if handler.is_saved_handler()
+                //     && !cfg.disable_mount_gamedirs
+                //     && cfg.profile_unique_dirs
+                //     && let Err(err) = fuse_overlayfs_mount_gamedirs(&handler, &flattened_instances)
+                // {
+                //     println!("[partydeck] Error mounting game directories: {}", err);
+                //     msg("Failed mounting game directories", &format!("{err}"));
+                //     return;
+                // }
                 if let Err(err) =
-                    launch_game(h, &self.input_devices, &mut self.launch_displays, &cfg, self.sys_monitors);
+                    // launch_game(&handler, &input_devices, launch_displays.lock().unwrap(), &cfg, &sys_monitors)
+                    launch_game(&handler, &self.input_devices, &mut self.launch_displays, &cfg, &self.sys_monitors)
                     // launch_game(&handler, self.input_devices, &mut instances, &cfg, self.sys_monitors)
                 {
                     println!("[partydeck] Error launching instances: {}", err);

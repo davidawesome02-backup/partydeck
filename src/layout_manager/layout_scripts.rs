@@ -12,6 +12,7 @@ pub trait LayoutWindows {
     fn display_editor(&self, ui: egui::Ui);
 }
 
+#[derive(Clone, Copy)]
 pub struct GameLayout {
     pub reverse_direction: bool,
     pub ideal_ratio: f32, // like: 16/9
@@ -88,7 +89,7 @@ impl LayoutWindows for GameLayout {
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct FlatLayout {
     pub split_dir_width: bool, // default height.
 }

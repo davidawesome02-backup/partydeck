@@ -43,7 +43,7 @@ pub fn launch_game(
     input_devices: &Vec<InputDevice>,
     displays: &mut Vec<LaunchDisplay>,
     cfg: &PartyConfig,
-    real_monitors: Vec<Monitor>,
+    real_monitors: &Vec<Monitor>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     
 
@@ -206,7 +206,7 @@ pub fn start_compositors_and_generate_commands(
     input_devices: &Vec<InputDevice>,
     displays: &mut Vec<LaunchDisplay>,
     cfg: &PartyConfig,
-    real_monitors: Vec<Monitor>,
+    real_monitors: &Vec<Monitor>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let win = h.win();
     let exec = Path::new(&h.exec);

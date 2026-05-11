@@ -332,7 +332,9 @@ impl PartyApp {
                     self.handler_edit = Some(h.clone());
                     self.cur_page = MenuPage::EditHandler;
                 } else {
-                    self.instances.clear();
+                    // TODO: REPLACE
+
+                    // self.instances.clear();
                     self.input_devices = scan_input_devices(&self.options.pad_filter_type);
                     self.sys_monitors = get_monitors_errorless();
                     self.profiles = scan_profiles(true);

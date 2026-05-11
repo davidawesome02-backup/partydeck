@@ -41,6 +41,7 @@ pub struct DeviceInfo {
 
 pub type DeviceHash = u64;
 
+#[derive(Clone)]
 pub struct InputDevice {
     path: String,
     dev: Device,

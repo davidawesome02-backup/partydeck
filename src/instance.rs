@@ -5,9 +5,8 @@ use eframe::egui;
 use crate::input::DeviceHash;
 use crate::layout_manager::LayoutWindows;
 
-
 pub struct LaunchDisplay {
-    pub layout: Box<dyn LayoutWindows>,
+    pub layout: Box<dyn LayoutWindows+Send>,
     pub instances: Vec<Instance>,
     pub nested_compositor: String,
     pub display_index: usize,
