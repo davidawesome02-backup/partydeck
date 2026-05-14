@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 
 use super::config::*;
@@ -225,6 +225,9 @@ impl PartyApp {
 
     fn handle_gamepad_gui(&mut self, raw_input: &mut egui::RawInput) {
         let mut key: Option<egui::Key> = None;
+
+        // let mut input_devices = self.input_devices.lock().unwrap();
+        // for pad in input_devices.iter_mut() {
         for pad in &mut self.input_devices {
             if !pad.enabled() {
                 continue;
@@ -438,43 +441,47 @@ impl PartyApp {
 
         self.cur_page = MenuPage::Home;
 
-        // let clone_monitor = self.sys_monitors[0].clone();
+        let input_devices: Vec<RunningInputDevice> = 
+            self.input_devices.iter().map(|value| {
+                RunningInputDevice::new(value)
+            }).collect();
 
-            // Clone these BEFORE the closure    
-        // let input_devices = std::sync::Arc::new(&self.input_devices);
-        // // let input_devices = self.input_devices.clone();    
-        // // let mut launch_displays = self.launch_displays.clone();
-        // // let launch_displays = Arc::new(std::cell::Mutex::new(&mut self.launch_displays));
-        // let launch_displays = Arc::new(std::sync::Mutex::new(&mut self.launch_displays));
-        // let sys_monitors = self.sys_monitors.clone();
+        let sys_monitors = self.sys_monitors.clone();
+        
+        let mut launch_displays: Vec<RunningLaunchDisplay> = 
+            self.launch_displays.iter().map(|value| {
+                RunningLaunchDisplay::new(value)
+            }).collect();
 
         self.spawn_task(
             "Launching...\n\nDon't press any buttons or move any analog sticks or mice.",
             move || {
                 sleep(std::time::Duration::from_secs_f32(1.5));
 
-                // let flattened_instances = self.launch_displays.iter().flat_map(
-                //     |display| display.instances 
-                // ).collect();
 
-                // if let Err(err) = setup_profiles(&handler, &flattened_instances) {
-                //     println!("[partydeck] Error mounting game directories: {}", err);
-                //     msg("Failed mounting game directories", &format!("{err}"));
-                //     return;
-                // }
-                // if handler.is_saved_handler()
-                //     && !cfg.disable_mount_gamedirs
-                //     && cfg.profile_unique_dirs
-                //     && let Err(err) = fuse_overlayfs_mount_gamedirs(&handler, &flattened_instances)
-                // {
-                //     println!("[partydeck] Error mounting game directories: {}", err);
-                //     msg("Failed mounting game directories", &format!("{err}"));
-                //     return;
-                // }
+                
+
+                let flattened_instances = &launch_displays.iter().flat_map(
+                    |display| &display.instances
+                ).collect();
+
+                if let Err(err) = setup_profiles(&handler, &flattened_instances) {
+                    println!("[partydeck] Error mounting game directories: {}", err);
+                    msg("Failed mounting game directories", &format!("{err}"));
+                    return;
+                }
+                if handler.is_saved_handler()
+                    && !cfg.disable_mount_gamedirs
+                    && cfg.profile_unique_dirs
+                    && let Err(err) = fuse_overlayfs_mount_gamedirs(&handler, &flattened_instances)
+                {
+                    println!("[partydeck] Error mounting game directories: {}", err);
+                    msg("Failed mounting game directories", &format!("{err}"));
+                    return;
+                }
+
                 if let Err(err) =
-                    // launch_game(&handler, &input_devices, launch_displays.lock().unwrap(), &cfg, &sys_monitors)
-                    launch_game(&handler, &self.input_devices, &mut self.launch_displays, &cfg, &self.sys_monitors)
-                    // launch_game(&handler, self.input_devices, &mut instances, &cfg, self.sys_monitors)
+                    launch_game(&handler, &input_devices, &mut launch_displays, &cfg, &sys_monitors)
                 {
                     println!("[partydeck] Error launching instances: {}", err);
                     msg("Launch Error", &format!("{err}"));

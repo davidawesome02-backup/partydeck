@@ -42,6 +42,25 @@ pub struct DeviceInfo {
 pub type DeviceHash = u64;
 
 #[derive(Clone)]
+pub struct RunningInputDevice {
+    pub path: String,
+    pub enabled: bool,
+    pub hash: DeviceHash,
+    pub device_type: DeviceType,
+    pub has_button_held: bool,
+}
+impl RunningInputDevice {
+    pub fn new(input: &InputDevice) -> Self {
+        Self {
+            path:               input.path().to_string(),
+            enabled:            input.enabled(),
+            hash:               input.hash(),
+            device_type:        input.device_type(),
+            has_button_held:    input.has_button_held(),
+        }
+    }
+}
+
 pub struct InputDevice {
     path: String,
     dev: Device,

@@ -10,6 +10,7 @@ pub struct WindowPostion {
 pub trait LayoutWindows {
     fn layout(&self, window_count: u32, display_width: u32, display_height: u32) -> Vec<WindowPostion>;
     fn display_editor(&self, ui: egui::Ui);
+    fn clone_box(&self) -> Box<dyn LayoutWindows+Send>;
 }
 
 #[derive(Clone, Copy)]
@@ -86,6 +87,9 @@ impl LayoutWindows for GameLayout {
     fn display_editor(&self, ui: egui::Ui) {
         
     }
+    fn clone_box(&self) -> Box<dyn LayoutWindows+Send> {
+        Box::new(self.clone())
+    }
 }
 
 
@@ -121,5 +125,8 @@ impl LayoutWindows for FlatLayout {
     }
     fn display_editor(&self, ui: egui::Ui) {
         
+    }
+    fn clone_box(&self) -> Box<dyn LayoutWindows+Send> {
+        Box::new(self.clone())
     }
 }

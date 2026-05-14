@@ -19,7 +19,7 @@ use crate::layout_manager::{WindowPostion, kwin_dbus_start_script, spawn_comp_an
 
 pub fn setup_profiles(
     h: &Handler,
-    instances: &Vec<Instance>,
+    instances: &Vec<&RunningInstance>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // println!("\n[partydeck] Instances:");
     for instance in instances {
@@ -40,8 +40,8 @@ pub fn setup_profiles(
 
 pub fn launch_game(
     h: &Handler,
-    input_devices: &Vec<InputDevice>,
-    displays: &mut Vec<LaunchDisplay>,
+    input_devices: &Vec<RunningInputDevice>,
+    displays: &mut Vec<RunningLaunchDisplay>,
     cfg: &PartyConfig,
     real_monitors: &Vec<Monitor>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -169,7 +169,7 @@ pub fn launch_game(
 }
 
 pub fn check_for_and_kill_games(
-    displays: &mut Vec<LaunchDisplay>
+    displays: &mut Vec<RunningLaunchDisplay>
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let mut has_alive_games = false;
     for display in displays {
@@ -203,8 +203,8 @@ pub fn check_for_and_kill_games(
 
 pub fn start_compositors_and_generate_commands(
     h: &Handler,
-    input_devices: &Vec<InputDevice>,
-    displays: &mut Vec<LaunchDisplay>,
+    input_devices: &Vec<RunningInputDevice>,
+    displays: &mut Vec<RunningLaunchDisplay>,
     cfg: &PartyConfig,
     real_monitors: &Vec<Monitor>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -304,10 +304,10 @@ pub fn generate_launch_command(
         runtime: &str,
         gamescope: &Path,
         h: &Handler,
-        input_devices: &Vec<InputDevice>,
+        input_devices: &Vec<RunningInputDevice>,
         cfg: &PartyConfig,
-        display: &LaunchDisplay,
-        instance: &Instance,
+        display: &RunningLaunchDisplay,
+        instance: &RunningInstance,
         current_display_idx: usize,
         full_count_idx: usize,
         window_size: &WindowPostion,
@@ -408,9 +408,9 @@ pub fn generate_launch_command(
         cmd.arg(format!("--display-index={}", display.display_index));
     }
 
-    let input_devices_enabled: Vec<&InputDevice> = instance.devices.iter().filter_map(|dev_find_hash| {
+    let input_devices_enabled: Vec<&RunningInputDevice> = instance.devices.iter().filter_map(|dev_find_hash| {
         for dev in input_devices {
-            if dev.hash() == *dev_find_hash {return Some(dev)}
+            if dev.hash == *dev_find_hash {return Some(dev)}
         }
 
         None
@@ -423,13 +423,13 @@ pub fn generate_launch_command(
         let mut kbms = String::new();
 
         for dev in &input_devices_enabled {
-            if dev.device_type() == DeviceType::Keyboard {
+            if dev.device_type == DeviceType::Keyboard {
                 instance_has_keyboard = true;
-            } else if dev.device_type() == DeviceType::Mouse {
+            } else if dev.device_type == DeviceType::Mouse {
                 instance_has_mouse = true;
             }
-            if dev.device_type() == DeviceType::Keyboard || dev.device_type() == DeviceType::Mouse {
-                kbms.push_str(&format!("{},", &dev.path()));
+            if dev.device_type == DeviceType::Keyboard || dev.device_type == DeviceType::Mouse {
+                kbms.push_str(&format!("{},", &dev.path));
             }
 
         }
@@ -454,13 +454,13 @@ pub fn generate_launch_command(
     cmd.args(["--tmpfs", "/tmp"]);
     // Mask out any gamepads that aren't this player's
     for dev in input_devices {
-        if !dev.enabled()
+        if !dev.enabled
             || (
-                !input_devices_enabled.iter().any(|dev_en| {dev_en.hash() == dev.hash()}) 
-                && dev.device_type() == DeviceType::Gamepad
+                !input_devices_enabled.iter().any(|dev_en| {dev_en.hash == dev.hash}) 
+                && dev.device_type == DeviceType::Gamepad
             )
         {
-            cmd.args(["--bind", "/dev/null", &dev.path()]);
+            cmd.args(["--bind", "/dev/null", &dev.path]);
         }
     }
 
@@ -592,7 +592,7 @@ pub fn generate_launch_command(
 
 pub fn fuse_overlayfs_mount_gamedirs(
     h: &Handler,
-    instances: &Vec<Instance>,
+    instances: &Vec<&RunningInstance>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = PATH_PARTY.join("tmp");
     let mut path_lowerdir = h.get_game_rootpath()?;
