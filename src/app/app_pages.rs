@@ -1,6 +1,7 @@
 use super::app::{MenuPage, PartyApp, SettingsPage};
 use super::config::*;
-use crate::layout_manager::LayoutWindows;
+use crate::instance::Instance;
+use crate::layout_manager::{LayoutType, LayoutWindows};
 use crate::{handler::*, layout_manager};
 use crate::input::*;
 use crate::monitor::get_monitors_errorless;
@@ -419,13 +420,64 @@ impl PartyApp {
 
         egui::TopBottomPanel::bottom(ui.next_auto_id())
             .resizable(false)
-            .exact_height(100.0)
+            .exact_height(150.0)
             .show_separator_line(false)
             .frame(egui::Frame::NONE)
             .show_inside(ui, |ui| {
                 ui.add_space(3.0); // Hack to make it actualy centered (calculated using the 6px separator line default height)
                 ui.separator();
-                ui.label("bottom text")
+                
+                egui::ScrollArea::vertical()
+                .max_height(ui.available_height()) // Remove lower menue height from avaliable
+                .auto_shrink(false)
+                .show(ui, |ui| {
+
+                    ui.label("Display settings");
+
+                    let current_display = &mut self.launch_displays[self.launch_display_idx];
+
+                    if ui.button("New instance").clicked() {
+                        current_display.instances.push(
+                            Instance {
+                                devices: vec![],
+                                profname: format!("New Name {}", current_display.instances.len()),
+                                color: egui::Color32::RED,
+                            }
+                        );
+                    }
+
+
+                    let layout_name = current_display.layout.get_type();
+                    let mut layout_new_name = current_display.layout.get_type();
+                    egui::containers::ComboBox::from_label("Layout type:")
+                        .selected_text(format!("{}",layout_new_name))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut layout_new_name, LayoutType::GameLayout, LayoutType::GameLayout.to_string());
+                            ui.selectable_value(&mut layout_new_name, LayoutType::FlatLayout, LayoutType::FlatLayout.to_string());
+                        });
+
+
+                    if layout_new_name != layout_name  {
+                        current_display.layout = match layout_new_name {
+                            LayoutType::GameLayout => {
+                                Box::new(layout_manager::GameLayout {
+                                    reverse_direction: false,
+                                    ideal_game_width: 16.0,
+                                    ideal_game_height: 9.0,
+                                })
+                            },
+                            LayoutType::FlatLayout => {
+                                Box::new(layout_manager::FlatLayout {
+                                    split_dir_width: false,
+                                })
+                            },
+                        };
+                    }
+                    
+
+                    current_display.layout.display_editor(ui);
+                });
+                
             }
         );
 
@@ -452,16 +504,26 @@ impl PartyApp {
             //     ideal_ratio: 16.0/9.0,
             // };
 
+            let current_display = &self.launch_displays[self.launch_display_idx];
 
-            let current_layout = layout_manager::FlatLayout{
-                split_dir_width: true,
-            };
 
             let top_left_cursor = ui.cursor().left_top().to_vec2();
 
-            let window_laid_out = current_layout.layout(10, target_res.0, target_res.1);
+            let window_laid_out = current_display.layout.layout(
+                current_display.instances.len() as u32, 
+                target_res.0, 
+                target_res.1
+            );
+
+            let mut dropped_swapped_loc: Option<(usize, usize)> = None;
+            let mut to_be_edited_instance: Option<usize> = None;
+
             for idx_instance in 0..window_laid_out.len() {
                 let wind_pos = window_laid_out.get(idx_instance).unwrap();
+
+                let current_display = &self.launch_displays[self.launch_display_idx];
+                let instance = current_display.instances.get(idx_instance).unwrap();
+                let instance_profname = instance.profname.clone();
 
                 let drop_rect = egui::Rect::from_min_size(
                     egui::pos2(
@@ -489,7 +551,7 @@ impl PartyApp {
                             .corner_radius(2)
                             .stroke(egui::Stroke::new(2.0, egui::Color32::GRAY));
                         
-                        ui.dnd_drop_zone::<i32, ()>(frame, |ui| {
+                        let dropped_payload = ui.dnd_drop_zone::<i32, ()>(frame, |ui| {
 
                             // Should be unique, when adding many displays, add the display to the salt here.
                             let dnd_id: eframe::egui::Id = ui.make_persistent_id(format!("dnd_instance-{idx_instance}"));
@@ -507,17 +569,35 @@ impl PartyApp {
 
                                         let test = ui.button("Ｓ").on_hover_text("Move handle");
                                         ui.interact(test.rect, dnd_id, egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
-                                        ui.label(format!("Inst: {idx_instance}"))
+                                        if ui.button("✏").on_hover_text("Edit").clicked() {
+                                            to_be_edited_instance = Some(idx_instance);
+                                        }
+                                        
+                                        // ui.label(format!("Inst: {idx_instance}"))
+                                        ui.label(instance_profname);
                                     });
                                 });
                             });
                             ui.set_width(ui.available_size().x);
                             ui.set_height(ui.available_size().y);
                             
-                        })
+                        });
+
+                        if let Some(dropped_idx) = dropped_payload.1 {
+                            // dropped_idx.
+                            dropped_swapped_loc = Some((*dropped_idx as usize, idx_instance as usize));
+                        }
                     },
                 );
             };
+
+            let current_display = &mut self.launch_displays[self.launch_display_idx];
+
+            if let Some(swap_locations) = dropped_swapped_loc {
+                // swap_locations
+                current_display.instances.swap(swap_locations.0, swap_locations.1);
+            }
+
         });
         });
 

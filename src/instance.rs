@@ -39,11 +39,11 @@ impl RunningLaunchDisplay {
 pub struct Instance {
     pub devices: Vec<DeviceHash>,// u64 - device hash
     pub profname: String,
-    pub temp: bool,
 
-    pub profidx: usize,
-    pub instidx: usize,
-    pub monidx: usize,
+    // Profidx may be changed or removed... idk if we need it. Its a refrence to the profile list, but this could change.
+    // pub profidx: usize,
+    // pub instidx: usize,
+    // pub monidx: usize,
 
     pub color: egui::Color32,
 }
@@ -51,14 +51,6 @@ pub struct Instance {
 pub struct RunningInstance {
     pub devices: Vec<DeviceHash>,// u64 - device hash
     pub profname: String,
-    pub temp: bool,
-
-    pub profidx: usize,
-    pub instidx: usize,
-    pub monidx: usize,
-
-    pub color: egui::Color32,
-
 
     // Populated durring launch only.
     pub command: Option<Command>,
@@ -70,11 +62,6 @@ impl RunningInstance {
         Self {
             devices:    input.devices.clone(),
             profname:   input.profname.clone(),
-            temp:       input.temp,
-            profidx:    input.profidx,
-            instidx:    input.instidx,
-            monidx:     input.monidx,
-            color:      input.color,
             command: None,
             game_proc: None,
         }

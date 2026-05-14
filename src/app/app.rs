@@ -46,6 +46,7 @@ pub struct PartyApp {
     pub instance_add_dev: Option<usize>,
     
     pub launch_displays: Vec<LaunchDisplay>,
+    pub launch_display_idx: usize,
 
     pub handlers: Vec<Handler>,
     pub selected_handler: usize,
@@ -95,7 +96,28 @@ impl PartyApp {
             loading_msg: None,
             loading_since: None,
             task: None,
-            launch_displays: vec![],
+            launch_displays: vec![
+                LaunchDisplay{
+                    layout: Box::new(layout_manager::FlatLayout{
+                        split_dir_width: true,
+                    }),
+                    instances: vec![
+                        Instance {
+                            devices: vec![],
+                            profname: "Profile 1".to_string(),
+                            color: egui::Color32::RED
+                        },
+                        Instance {
+                            devices: vec![],
+                            profname: "Profile 2".to_string(),
+                            color: egui::Color32::BLUE
+                        }
+                    ],
+                    nested_compositor: "".to_string(),
+                    display_index: 0,
+                }
+            ],
+            launch_display_idx: 0
         };
 
         if app.options.check_for_updates {
@@ -425,6 +447,7 @@ impl PartyApp {
         // }
     }
 
+    #[allow(dead_code)]
     pub fn prepare_game_launch(&'static mut self ) {
         let handler = if let Some(h) = self.handler_lite.clone() {
             h
