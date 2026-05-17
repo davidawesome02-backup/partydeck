@@ -115,9 +115,10 @@ impl PartyApp {
                     ],
                     nested_compositor: "".to_string(),
                     display_index: 0,
+                    move_handle_sel_idx: None
                 }
             ],
-            launch_display_idx: 0
+            launch_display_idx: 0,
         };
 
         if app.options.check_for_updates {

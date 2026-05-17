@@ -10,6 +10,7 @@ pub struct LaunchDisplay {
     pub instances: Vec<Instance>,
     pub nested_compositor: String,
     pub display_index: usize,
+    pub move_handle_sel_idx: Option<usize>,
 }
 
 pub struct RunningLaunchDisplay {

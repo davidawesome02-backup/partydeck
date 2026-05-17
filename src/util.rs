@@ -1,6 +1,7 @@
 use crate::paths::{PATH_HOME, PATH_PARTY};
 
 use dialog::{Choice, DialogBox};
+use eframe::egui;
 use rfd::FileDialog;
 use std::error::Error;
 use std::fs::{self, File};
@@ -321,4 +322,29 @@ pub fn command_to_bash_script(cmd: &Command) -> String {
 
 fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace("'", "'\\''"))
+}
+
+// Idk if I like this, but I wanted to add it because I thought smashing the unused displays may make it not grow super large.
+pub fn condense_display(display: &mut Vec<crate::instance::LaunchDisplay>, display_edit_idx: &mut usize) {
+    let mut i = 1;
+    while i < display.len() {
+        if display[i].instances.len() == 0 && display[i - 1].instances.len() == 0 {
+            display.remove(i);
+            if i <= *display_edit_idx {
+                *display_edit_idx -= 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+}
+
+// Converted to rust from the legendary stackoverflow/a/54024653
+// h: 0-360, s,v: 0-1, rgb: 0-1
+pub fn hsv2rgb(h: f64, s: f64, v: f64) -> egui::Color32 {
+    let f = |n: f64| {
+        let k = (n + h / 60.0) % 6.0;
+        (v - v * s * (k.min(4.0 - k).min(1.0)).max(0.0)) * 255.0
+    };
+    egui::Color32::from_rgb(f(5.0) as u8, f(3.0) as u8, f(1.0) as u8)
 }

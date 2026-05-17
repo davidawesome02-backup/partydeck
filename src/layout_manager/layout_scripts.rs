@@ -1,10 +1,30 @@
 use eframe::egui;
 
+#[derive(Ord, PartialEq, Eq)]
 pub struct WindowPostion {
     pub x: u32,
     pub y: u32,
     pub w: u32,
     pub h: u32,
+}
+impl PartialOrd for WindowPostion {
+    fn partial_cmp(&self, other: &Self) -> std::option::Option<std::cmp::Ordering> {
+        if self.y > other.y {
+            return Some(std::cmp::Ordering::Greater);
+        }
+        if self.y < other.y {
+            return Some(std::cmp::Ordering::Less);
+        }
+
+        if self.x > other.x {
+            return Some(std::cmp::Ordering::Greater);
+        }
+        if self.x < other.x {
+            return Some(std::cmp::Ordering::Less);
+        }
+
+        return Some(std::cmp::Ordering::Equal);
+    }
 }
 
 
@@ -35,6 +55,8 @@ pub struct GameLayout {
 }
 impl LayoutWindows for GameLayout {
     fn layout(&self, window_count: u32, display_width: u32, display_height: u32) -> Vec<WindowPostion> {
+        if window_count == 0 {return vec![];}
+
         // Window counts for width and height
         let (mut w, mut h) = (0, 0);
 
@@ -97,6 +119,8 @@ impl LayoutWindows for GameLayout {
             );
         }
 
+        windows_output.sort();
+
         windows_output
     }
     fn display_editor(&mut self, ui: &mut egui::Ui) {
@@ -110,11 +134,13 @@ impl LayoutWindows for GameLayout {
             ui.add(
                 egui::widgets::DragValue::new(&mut self.ideal_game_width)
                     .range(1..=30)
+                    .speed(0.2)
             );
             ui.label("x");
             ui.add(
                 egui::widgets::DragValue::new(&mut self.ideal_game_height)
                     .range(1..=30)
+                    .speed(0.2)
             );
         });
     }
@@ -133,6 +159,9 @@ pub struct FlatLayout {
 }
 impl LayoutWindows for FlatLayout {
     fn layout(&self, window_count: u32, display_width: u32, display_height: u32) -> Vec<WindowPostion> {
+        if window_count == 0 {return vec![];}
+
+        
         let mut windows_output = Vec::new();
         windows_output.reserve(window_count as usize);
 
@@ -154,6 +183,8 @@ impl LayoutWindows for FlatLayout {
                 }
             );
         }
+
+        windows_output.sort();
 
         windows_output
     }

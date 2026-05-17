@@ -1,6 +1,6 @@
 use super::app::{MenuPage, PartyApp, SettingsPage};
 use super::config::*;
-use crate::instance::Instance;
+use crate::instance::{Instance, LaunchDisplay};
 use crate::layout_manager::{LayoutType, LayoutWindows};
 use crate::{handler::*, layout_manager};
 use crate::input::*;
@@ -400,7 +400,7 @@ impl PartyApp {
                 self_u.scope_builder(egui::UiBuilder::new().layer_id(layer_id), add_contents);
 
             if let Some(pointer_pos) = self_u.ctx().pointer_interact_pos() {
-                let delta = pointer_pos - response.rect.left_top() - egui::vec2(10.0, 10.0); // Manual correction factor
+                let delta = pointer_pos - response.rect.left_top() - egui::vec2(12.0, 12.0); // Manual correction factor
                 self_u.ctx()
                     .transform_layer_shapes(layer_id, egui::emath::TSTransform::from_translation(delta));
             }
@@ -432,6 +432,8 @@ impl PartyApp {
                 .auto_shrink(false)
                 .show(ui, |ui| {
 
+                    ui.label(format!("Display {}/{}", self.launch_display_idx+1, self.launch_displays.len()));
+
                     ui.label("Display settings");
 
                     let current_display = &mut self.launch_displays[self.launch_display_idx];
@@ -441,7 +443,7 @@ impl PartyApp {
                             Instance {
                                 devices: vec![],
                                 profname: format!("New Name {}", current_display.instances.len()),
-                                color: egui::Color32::RED,
+                                color: crate::util::hsv2rgb(fastrand::f64()*360., 0.8, 0.8),
                             }
                         );
                     }
@@ -449,12 +451,16 @@ impl PartyApp {
 
                     let layout_name = current_display.layout.get_type();
                     let mut layout_new_name = current_display.layout.get_type();
-                    egui::containers::ComboBox::from_label("Layout type:")
-                        .selected_text(format!("{}",layout_new_name))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut layout_new_name, LayoutType::GameLayout, LayoutType::GameLayout.to_string());
-                            ui.selectable_value(&mut layout_new_name, LayoutType::FlatLayout, LayoutType::FlatLayout.to_string());
-                        });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Layout type:");
+                        egui::containers::ComboBox::new("LayoutTypeComboBox", "")
+                            .selected_text(format!("{}",layout_new_name))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut layout_new_name, LayoutType::GameLayout, LayoutType::GameLayout.to_string());
+                                ui.selectable_value(&mut layout_new_name, LayoutType::FlatLayout, LayoutType::FlatLayout.to_string());
+                            });
+                    });
 
 
                     if layout_new_name != layout_name  {
@@ -481,14 +487,66 @@ impl PartyApp {
             }
         );
 
+        egui::SidePanel::left(ui.next_auto_id())
+            .resizable(false)
+            .show_separator_line(false)
+            .exact_width(35.0)
+            .frame(egui::Frame::NONE)
+            .show_inside(ui, |ui| {
+                ui.centered_and_justified(|ui| {
+                    ui.set_height(25.0);
+                    ui.set_width(25.0);
+                    let is_first_page = self.launch_display_idx == 0;
+                    if ui.button(if is_first_page {"\u{01F6AB}"} else {"⬅"}).clicked() && !is_first_page {
+                        self.launch_display_idx-=1;
+                    }
+                })
+            });
+
+        egui::SidePanel::right(ui.next_auto_id())
+            .resizable(false)
+            .show_separator_line(false)
+            .frame(egui::Frame::NONE)
+            .exact_width(35.0)
+            .show_inside(ui, |ui| {
+                ui.centered_and_justified(|ui| {
+                    ui.set_height(25.0);
+                    ui.set_width(25.0);
+                    let is_last_display = self.launch_display_idx+1 == self.launch_displays.len();
+                    let should_allow_create_new_instance = !self.launch_displays[self.launch_display_idx].instances.is_empty();
+                    if ui.button(if is_last_display { if should_allow_create_new_instance {"✚"} else {"\u{01F6AB}"}} else {"➡"}).clicked() {
+                        if is_last_display {
+                            if should_allow_create_new_instance {
+                                self.launch_displays.push(
+                                    LaunchDisplay {
+                                        layout: Box::new(layout_manager::GameLayout {
+                                            reverse_direction: false,
+                                            ideal_game_width: 16.0,
+                                            ideal_game_height: 9.0,
+                                        }),
+                                        instances: vec![],
+                                        nested_compositor: "".to_string(),
+                                        display_index: 0,
+                                        move_handle_sel_idx: None,
+                                    }
+                                );
+                                self.launch_display_idx+=1;
+                            }
+                        } else {
+                            self.launch_display_idx+=1;
+                        }
+                    }
+                })
+            });
+
         ui.centered_and_justified(|ui| {
         egui::Frame::NONE
-        .fill(egui::Color32::PURPLE)
+        .fill(egui::Color32::from_gray(80))
         .inner_margin(2.0)
         .corner_radius(2)
         .show(ui, |ui| {
 
-
+            // Todo not hardcode.
             let target_res = (1920, 1080);
             
             let aspect_ratio = (target_res.0 as f32)/(target_res.1 as f32);
@@ -498,13 +556,23 @@ impl PartyApp {
             ui.set_height(height);
             ui.set_width(width);
 
-            
-            // let current_layout = layout_manager::GameLayout{
-            //     reverse_direction: false,
-            //     ideal_ratio: 16.0/9.0,
-            // };
-
             let current_display = &self.launch_displays[self.launch_display_idx];
+
+
+            if current_display.instances.len() == 0 {
+                ui.vertical_centered(|ui| {
+                    // Todo remove this random spacing. 
+                    ui.add_space(ui.available_height()/2.0-15.0);
+                    ui.label("No instances, click \"New instance\" to add.");
+
+                    if ui.button("Remove display").clicked() {
+                        self.launch_displays.remove(self.launch_display_idx);
+                        self.launch_display_idx -= 1;
+                    }
+                });
+                
+                return;
+            }
 
 
             let top_left_cursor = ui.cursor().left_top().to_vec2();
@@ -517,13 +585,21 @@ impl PartyApp {
 
             let mut dropped_swapped_loc: Option<(usize, usize)> = None;
             let mut to_be_edited_instance: Option<usize> = None;
+            let mut to_be_removed_instance: Option<usize> = None;
+
+            let mut new_display_sel_handle: Option<usize> = None;
+
+
 
             for idx_instance in 0..window_laid_out.len() {
                 let wind_pos = window_laid_out.get(idx_instance).unwrap();
 
                 let current_display = &self.launch_displays[self.launch_display_idx];
+                let display_sel_handle = current_display.move_handle_sel_idx.clone();
+
                 let instance = current_display.instances.get(idx_instance).unwrap();
                 let instance_profname = instance.profname.clone();
+                let instance_color = instance.color.clone();
 
                 let drop_rect = egui::Rect::from_min_size(
                     egui::pos2(
@@ -560,6 +636,7 @@ impl PartyApp {
                             egui::Frame::NONE
                                 .fill(egui::Color32::from_gray(20))
                                 .corner_radius(2)
+                                .stroke(egui::Stroke::new(2.0, instance_color))
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_size().x);
                                     ui.set_height(ui.available_size().y);
@@ -567,14 +644,31 @@ impl PartyApp {
                                         
                                         ui.style_mut().spacing.item_spacing.x = 3.0;
 
-                                        let test = ui.button("Ｓ").on_hover_text("Move handle");
-                                        ui.interact(test.rect, dnd_id, egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
+
+                                        // let current_display = &mut self.launch_displays[self.launch_display_idx].move_handle_sel_idx;
+
+                                        ui.scope(|ui| {
+                                            ui.style_mut().visuals.widgets.active.weak_bg_fill = egui::Color32::LIGHT_GREEN;
+                                            if display_sel_handle == Some(idx_instance) {
+                                                ui.style_mut().visuals.widgets.active.weak_bg_fill = egui::Color32::LIGHT_RED;
+                                                ui.style_mut().visuals.widgets.inactive.weak_bg_fill = egui::Color32::DARK_GREEN;
+                                            }
+                                            let move_handle = ui.button("Ｓ").on_hover_text("Move handle");
+                                            ui.interact(move_handle.rect, dnd_id, egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
+                                            if move_handle.clicked() {
+                                                new_display_sel_handle = Some(idx_instance);
+                                            }
+                                        });
+                                        
+                                        if ui.button("\u{01F5D1}").on_hover_text("Remove").clicked() {
+                                            to_be_removed_instance = Some(idx_instance);
+                                        }
+
                                         if ui.button("✏").on_hover_text("Edit").clicked() {
                                             to_be_edited_instance = Some(idx_instance);
                                         }
                                         
-                                        // ui.label(format!("Inst: {idx_instance}"))
-                                        ui.label(instance_profname);
+                                        ui.add(egui::Label::new(instance_profname).truncate());
                                     });
                                 });
                             });
@@ -584,17 +678,37 @@ impl PartyApp {
                         });
 
                         if let Some(dropped_idx) = dropped_payload.1 {
-                            // dropped_idx.
-                            dropped_swapped_loc = Some((*dropped_idx as usize, idx_instance as usize));
+                            dropped_swapped_loc = Some((*dropped_idx as usize, idx_instance));
                         }
                     },
                 );
             };
 
+
+
+
+            // WARNING below this line, we may not execute because the ordering of swaps or removals will interupt eachother.
             let current_display = &mut self.launch_displays[self.launch_display_idx];
+            
+            
+            if let Some(remove_idx) = to_be_removed_instance {
+                current_display.instances.remove(remove_idx);
+                condense_display(&mut self.launch_displays, &mut self.launch_display_idx);
+                return;
+            }
+
+
+            if let Some(new_moved_handle) = new_display_sel_handle {
+                if let Some(old_moved_handle) = current_display.move_handle_sel_idx {
+                    dropped_swapped_loc = Some((new_moved_handle, old_moved_handle));
+
+                    current_display.move_handle_sel_idx = None;
+                } else {
+                    current_display.move_handle_sel_idx = new_display_sel_handle;
+                }
+            }
 
             if let Some(swap_locations) = dropped_swapped_loc {
-                // swap_locations
                 current_display.instances.swap(swap_locations.0, swap_locations.1);
             }
 
