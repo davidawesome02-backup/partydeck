@@ -547,7 +547,8 @@ impl PartyApp {
         .show(ui, |ui| {
 
             // Todo not hardcode.
-            let target_res = (1920, 1080);
+            let target_res = (self.sys_monitors[0].width(), self.sys_monitors[0].height());
+            // let target_res = (1920, 1080);
             
             let aspect_ratio = (target_res.0 as f32)/(target_res.1 as f32);
             let height = (ui.available_width()/aspect_ratio).min(ui.available_height() as f32);
@@ -565,9 +566,12 @@ impl PartyApp {
                     ui.add_space(ui.available_height()/2.0-15.0);
                     ui.label("No instances, click \"New instance\" to add.");
 
-                    if ui.button("Remove display").clicked() {
-                        self.launch_displays.remove(self.launch_display_idx);
-                        self.launch_display_idx -= 1;
+                    if self.launch_displays.len() > 1 {
+                       if ui.button("Remove display").clicked() {
+                            self.launch_displays.remove(self.launch_display_idx);
+                            
+                            self.launch_display_idx = self.launch_display_idx.saturating_sub(1);
+                        }
                     }
                 });
                 
@@ -621,7 +625,7 @@ impl PartyApp {
                     |ui| {
                         ui.set_width(drop_rect.width());
                         ui.set_height(drop_rect.height());
-
+                        
 
                         let frame = egui::Frame::default()
                             .corner_radius(2)
@@ -846,6 +850,18 @@ impl PartyApp {
             });
         }*/
     }
+
+
+
+    // pub fn display_page_instanes_edit_displays(&mut self, ui: &mut Ui) {
+    //     if self.current_editing_instance.is_none() {
+    //         return;
+    //     }
+
+    //     egui::Modal::new(ui.next_auto_id()).show(ui.ctx(), |ui| {
+
+    //     });
+    // }
 
     pub fn display_settings_general(&mut self, ui: &mut Ui) {
         let check_for_app_updates = ui.checkbox(

@@ -190,7 +190,7 @@ impl LayoutWindows for FlatLayout {
     }
     fn display_editor(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label("Use height instead of width:");
+            ui.label("Split horizontal:");
             ui.checkbox(&mut self.split_dir_width, "");
         });
     }
