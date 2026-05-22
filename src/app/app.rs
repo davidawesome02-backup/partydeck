@@ -48,6 +48,8 @@ pub struct PartyApp {
     pub launch_displays: Vec<LaunchDisplay>,
     pub launch_display_idx: usize,
 
+    pub model_temp_modify_profile: Option<(usize, usize)>,
+
     pub handlers: Vec<Handler>,
     pub selected_handler: usize,
     pub handler_edit: Option<Handler>,
@@ -121,6 +123,7 @@ impl PartyApp {
                 }
             ],
             launch_display_idx: 0,
+            model_temp_modify_profile: None,
         };
 
         if app.options.check_for_updates {

@@ -2,7 +2,7 @@ use super::app::{MenuPage, PartyApp, SettingsPage};
 use super::config::*;
 use crate::instance::{Instance, LaunchDisplay};
 use crate::layout_manager::{LayoutType, LayoutWindows};
-use crate::{handler::*, layout_manager};
+use crate::{handler::*, input, layout_manager};
 use crate::input::*;
 use crate::monitor::get_monitors_errorless;
 use crate::paths::*;
@@ -436,16 +436,50 @@ impl PartyApp {
 
                     ui.label("Display settings");
 
+                    let mut current_used_profiles_for_others =
+                            self.launch_displays.iter().flat_map(|check_display| {
+                                check_display.instances.iter().map(move |check_instance| {
+                                    check_instance.profname.clone()
+                                })
+                            }).collect::<std::collections::HashSet<_>>().into_iter().collect::<Vec<_>>();
+                    current_used_profiles_for_others.sort();
+
                     let current_display = &mut self.launch_displays[self.launch_display_idx];
 
-                    if ui.button("New instance").clicked() {
+                    if ui.button("TEMP REMOVE").clicked() {
                         current_display.instances.push(
                             Instance {
                                 devices: vec![],
                                 profname: format!("New Name {}", current_display.instances.len()),
                                 color: crate::util::hsv2rgb(fastrand::f64()*360., 0.8, 0.8),
+                                // temp_profile: true,
                             }
                         );
+                    }
+                    if ui.button("New instance").clicked() {
+
+
+
+                        let new_prof_name = match fastrand::choice(
+                                GUEST_NAMES.iter().filter_map(|guest_name_check| {
+                                    let on_disk_name = format!(".{guest_name_check}");
+
+                                    if current_used_profiles_for_others.contains(&on_disk_name) {None} else {Some(on_disk_name)}                                
+                                }).collect::<Vec<String>>()
+                        ) {
+                            Some(a) => a.to_owned(),
+                            None => format!("Profile name - {}", fastrand::u32(10000..99999)),
+                        };
+
+                        current_display.instances.push(
+                            Instance {
+                                devices: vec![],
+                                profname: new_prof_name,
+                                color: crate::util::hsv2rgb(fastrand::f64()*360., 0.8, 0.8),
+                                // temp_profile: true,
+                            }
+                        );
+                        self.model_temp_modify_profile = Some((self.launch_display_idx, current_display.instances.len()-1));
                     }
 
 
@@ -716,8 +750,14 @@ impl PartyApp {
                 current_display.instances.swap(swap_locations.0, swap_locations.1);
             }
 
+            if let Some(edit_instance_loc) = to_be_edited_instance {
+                self.model_temp_modify_profile = Some((self.launch_display_idx, edit_instance_loc));
+            }
+
         });
         });
+
+        self.display_page_instanes_edit_displays(ui);
 
 
         // ui.set_height(ui.available_height());
@@ -853,15 +893,130 @@ impl PartyApp {
 
 
 
-    // pub fn display_page_instanes_edit_displays(&mut self, ui: &mut Ui) {
-    //     if self.current_editing_instance.is_none() {
-    //         return;
-    //     }
+    pub fn display_page_instanes_edit_displays(&mut self, ui: &mut Ui) {
+        if self.model_temp_modify_profile.is_none() {return;}
+        let prof_loc = self.model_temp_modify_profile.unwrap();
 
-    //     egui::Modal::new(ui.next_auto_id()).show(ui.ctx(), |ui| {
 
-    //     });
-    // }
+        let saved_profiles = self.profiles.clone();
+
+        let mut current_used_profiles_for_others: Vec<_> =
+            self.launch_displays.iter().enumerate().flat_map(|(display_idx, check_display)| {
+                check_display.instances.iter().enumerate().filter_map(move |(instance_idx, check_instance)| {
+                    if (display_idx, instance_idx) == prof_loc {
+                        None
+                    } else {
+                        Some(check_instance.profname.clone())
+                    }
+                })
+            }).collect::<std::collections::HashSet<_>>().into_iter().collect();
+        current_used_profiles_for_others.sort();
+
+        let unused_saved_profiles: Vec<_> = 
+            saved_profiles.iter().filter(|x| !current_used_profiles_for_others.contains(x)).collect();
+
+
+        if prof_loc.0 >= self.launch_displays.len() {self.model_temp_modify_profile = None; return;}
+        let disp_editing = &mut self.launch_displays[prof_loc.0];
+        
+        if prof_loc.1 >= disp_editing.instances.len() {self.model_temp_modify_profile = None; return;}
+        // let inst_editing = &mut disp_editing.instances[prof_loc.1];
+
+        // Drop the value because we have to construct it later to avoid borrowing the whole time smh.
+        drop(disp_editing);
+
+        egui::Modal::new(ui.next_auto_id()).show(ui.ctx(), |ui| {
+            if ui.button("Close").clicked() {
+                self.model_temp_modify_profile = None;
+                return;
+            }
+
+
+            ui.horizontal(|ui| {
+                ui.label("Profile selection:");
+
+                let disp_editing = &mut self.launch_displays[prof_loc.0];
+                let inst_editing = &mut disp_editing.instances[prof_loc.1];
+
+
+                let new_profname = &mut Some(inst_editing.profname.clone());
+
+                egui::containers::ComboBox::new("ProfileSelectionComboBox", "")
+                    .selected_text(inst_editing.profname.clone())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(new_profname, None, "New temp");
+                        ui.separator();
+                        for profile in unused_saved_profiles {
+                            ui.selectable_value(new_profname, Some(profile.clone()), profile);
+                        }
+                        ui.separator();
+                        for profile in &current_used_profiles_for_others {
+                            ui.selectable_value(new_profname, Some(profile.clone()), profile);
+                        }
+                    });
+
+                inst_editing.profname = if let Some(accepted_new_profname) = new_profname {
+                    accepted_new_profname.to_string()
+                } else {
+                    match fastrand::choice(
+                            GUEST_NAMES.iter().filter_map(|guest_name_check| {
+                                let on_disk_name = format!(".{guest_name_check}");
+
+                                if current_used_profiles_for_others.contains(&on_disk_name) {None} else {Some(on_disk_name)}                                
+                            }).collect::<Vec<String>>()
+                    ) {
+                        Some(a) => a.to_owned(),
+                        None => format!("Profile name - {}", fastrand::u32(10000..99999)),
+                    }
+                }
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Outline color:");
+
+                let disp_editing = &mut self.launch_displays[prof_loc.0];
+                let inst_editing = &mut disp_editing.instances[prof_loc.1];
+
+                ui.color_edit_button_srgba(&mut inst_editing.color);
+                // let _ = egui::color_picker::color_picker_color32(ui, &mut , egui::color_picker::Alpha::Opaque);
+                // ui.add()
+            });
+
+            ui.separator();
+
+            for input_dev in &self.input_devices {
+                
+                let already_used = self.launch_displays.iter().enumerate().any(|(display_idx, check_display)| {
+                    check_display.instances.iter().enumerate().any(move |(instance_idx, check_instance)| {
+                        if (display_idx, instance_idx) == prof_loc {return false;}
+                        check_instance.devices.contains(&input_dev.hash())
+                    })
+                });
+
+                let dev_text = RichText::new(format!(
+                    "{} {} ({})",
+                    input_dev.emoji(),
+                    input_dev.fancyname(),
+                    input_dev.path().trim_start_matches("/dev/input/event")
+                ))
+                .small()
+                .color(
+                    match (input_dev.enabled(), input_dev.has_button_held(), already_used) {
+                        (false, _,    false ) => egui::Color32::RED,
+                        (true,  true, false ) => egui::Color32::GREEN,
+                        (_,     _,    _     ) => egui::Color32::BLUE
+                    }
+                );
+
+                ui.label(dev_text);
+            }
+
+            // if inst_editing.temp_profile {
+            //     saved_profiles
+            // }
+
+        });
+    }
 
     pub fn display_settings_general(&mut self, ui: &mut Ui) {
         let check_for_app_updates = ui.checkbox(

@@ -40,6 +40,9 @@ impl RunningLaunchDisplay {
 pub struct Instance {
     pub devices: Vec<DeviceHash>,// u64 - device hash
     pub profname: String,
+    // pub temp_profile: bool,
+
+    // pub model_editing_idx: Option<usize>,
 
     // Profidx may be changed or removed... idk if we need it. Its a refrence to the profile list, but this could change.
     // pub profidx: usize,
@@ -48,6 +51,11 @@ pub struct Instance {
 
     pub color: egui::Color32,
 }
+// impl Instance {
+//     pub fn profname_disk(self: &Self) -> String {
+//         (if self.temp_profile {"."} else {""}).to_owned() + &self.profname
+//     }
+// }
 
 pub struct RunningInstance {
     pub devices: Vec<DeviceHash>,// u64 - device hash
