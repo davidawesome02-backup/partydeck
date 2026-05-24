@@ -1,7 +1,7 @@
 use crate::paths::{PATH_HOME, PATH_PARTY};
 
 use dialog::{Choice, DialogBox};
-use eframe::egui;
+use eframe::egui::{self, Color32};
 use rfd::FileDialog;
 use std::error::Error;
 use std::fs::{self, File};
@@ -347,4 +347,35 @@ pub fn hsv2rgb(h: f64, s: f64, v: f64) -> egui::Color32 {
         (v - v * s * (k.min(4.0 - k).min(1.0)).max(0.0)) * 255.0
     };
     egui::Color32::from_rgb(f(5.0) as u8, f(3.0) as u8, f(1.0) as u8)
+}
+
+// Distance is not really correct here because its rgb are not in 0-1,
+// but it does not matter for comparison.
+
+
+fn rgb_distance(c1: Color32, c2: Color32) -> f32 {
+    let r = (c1.r() as f32 - c2.r() as f32).powi(2) * 0.299;
+    let g = (c1.g() as f32 - c2.g() as f32).powi(2) * 0.587;
+    let b = (c1.b() as f32 - c2.b() as f32).powi(2) * 0.114;
+    (r + g + b).sqrt()
+}
+
+
+pub fn random_new_inst_color(cur_instances: &Vec<crate::instance::Instance>) -> Color32 {
+    // Generate 10 random colors, find the one with the maximum distance to any others, and return that color
+
+    (0..10)
+        .map(|_| hsv2rgb(fastrand::f64()*360., 0.8, 0.8))
+        .map(|test_color| {
+            (
+                cur_instances.iter().map(|existing_inst| {
+                    rgb_distance(existing_inst.color, test_color)
+                }).fold(f32::INFINITY, f32::min),
+                test_color
+            )
+        }).max_by(|canidate_a, canidate_b| {
+            canidate_a.0.partial_cmp(&canidate_b.0).unwrap_or(std::cmp::Ordering::Equal)
+        }).unwrap_or_else(
+            || (0.,hsv2rgb(fastrand::f64()*360., 0.8, 0.8)) 
+        ).1
 }

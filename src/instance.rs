@@ -5,10 +5,34 @@ use eframe::egui;
 use crate::input::DeviceHash;
 use crate::layout_manager::LayoutWindows;
 
+#[derive(PartialEq)]
+#[derive(Clone)]
+pub enum LaunchCompositors {
+    River,
+    Kwin,
+    Native,
+}
+impl LaunchCompositors {
+    pub fn display_name(&self) -> String {
+        match self {
+            LaunchCompositors::River =>     "River (nested)",
+            LaunchCompositors::Kwin =>      "Kwin (nested)",
+            LaunchCompositors::Native =>    "Native",
+        }.to_string()
+    }
+    pub fn launch_executable(&self) -> String {
+        match self {
+            LaunchCompositors::River =>     "river",
+            LaunchCompositors::Kwin =>      "kwin",
+            LaunchCompositors::Native =>    "",
+        }.to_string()
+    }
+}
+
 pub struct LaunchDisplay {
     pub layout: Box<dyn LayoutWindows+Send>,
     pub instances: Vec<Instance>,
-    pub nested_compositor: String,
+    pub nested_compositor: LaunchCompositors,
     pub display_index: usize,
     pub move_handle_sel_idx: Option<usize>,
 }
@@ -16,7 +40,7 @@ pub struct LaunchDisplay {
 pub struct RunningLaunchDisplay {
     pub layout: Box<dyn LayoutWindows+Send>,
     pub instances: Vec<RunningInstance>,
-    pub nested_compositor: String,
+    pub nested_compositor: LaunchCompositors,
     pub display_index: usize,
 
     // None until starting the compositor durring launch.

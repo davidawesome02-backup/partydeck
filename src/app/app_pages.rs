@@ -1,6 +1,6 @@
 use super::app::{MenuPage, PartyApp, SettingsPage};
 use super::config::*;
-use crate::instance::{Instance, LaunchDisplay};
+use crate::instance::{Instance, LaunchCompositors, LaunchDisplay};
 use crate::layout_manager::{LayoutType, LayoutWindows};
 use crate::{handler::*, input, layout_manager};
 use crate::input::*;
@@ -413,14 +413,30 @@ impl PartyApp {
 
     pub fn display_page_instances(&mut self, ui: &mut Ui) {
 
-        ui.heading("Instances");
+        ui.horizontal(|ui| {
+            ui.heading("Instances");
+            
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let launch_enabled = self.launch_displays.iter().any(|disp| disp.instances.len()>0);
+
+                if (
+                    ui.add_enabled(
+                        launch_enabled, egui::Button::new("Launch")
+                    ).on_disabled_hover_text("Please add instances")
+                ).clicked() {
+                    println!("Launch not impl")
+                }
+            });
+        });
+
+
         ui.separator();
         
       
 
         egui::TopBottomPanel::bottom(ui.next_auto_id())
             .resizable(false)
-            .exact_height(150.0)
+            .exact_height(160.0)
             .show_separator_line(false)
             .frame(egui::Frame::NONE)
             .show_inside(ui, |ui| {
@@ -434,7 +450,10 @@ impl PartyApp {
 
                     ui.label(format!("Display {}/{}", self.launch_display_idx+1, self.launch_displays.len()));
 
-                    ui.label("Display settings");
+
+                    ui.separator();
+
+                    // ui.label("Display settings");
 
                     let mut current_used_profiles_for_others =
                             self.launch_displays.iter().flat_map(|check_display| {
@@ -446,16 +465,9 @@ impl PartyApp {
 
                     let current_display = &mut self.launch_displays[self.launch_display_idx];
 
-                    if ui.button("TEMP REMOVE").clicked() {
-                        current_display.instances.push(
-                            Instance {
-                                devices: vec![],
-                                profname: format!("New Name {}", current_display.instances.len()),
-                                color: crate::util::hsv2rgb(fastrand::f64()*360., 0.8, 0.8),
-                                // temp_profile: true,
-                            }
-                        );
-                    }
+
+                    
+
                     if ui.button("New instance").clicked() {
 
 
@@ -468,19 +480,32 @@ impl PartyApp {
                                 }).collect::<Vec<String>>()
                         ) {
                             Some(a) => a.to_owned(),
-                            None => format!("Profile name - {}", fastrand::u32(10000..99999)),
+                            None => format!(".Auto profile - {}", fastrand::u32(10000..99999)),
                         };
 
                         current_display.instances.push(
                             Instance {
                                 devices: vec![],
                                 profname: new_prof_name,
-                                color: crate::util::hsv2rgb(fastrand::f64()*360., 0.8, 0.8),
-                                // temp_profile: true,
+                                color: crate::util::random_new_inst_color(&current_display.instances),
                             }
                         );
+
                         self.model_temp_modify_profile = Some((self.launch_display_idx, current_display.instances.len()-1));
                     }
+
+
+                    let current_compositor = &mut current_display.nested_compositor;
+                    ui.horizontal(|ui| {
+                        ui.label("Compositor");
+                        egui::containers::ComboBox::new("CompositorComboBox", "")
+                            .selected_text(current_compositor.display_name())
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(current_compositor, LaunchCompositors::Native,  LaunchCompositors::Native.display_name());
+                                ui.selectable_value(current_compositor, LaunchCompositors::Kwin,    LaunchCompositors::Kwin.display_name()  );
+                                ui.selectable_value(current_compositor, LaunchCompositors::River,   LaunchCompositors::River.display_name() );
+                            });
+                    });
 
 
                     let layout_name = current_display.layout.get_type();
@@ -559,7 +584,7 @@ impl PartyApp {
                                             ideal_game_height: 9.0,
                                         }),
                                         instances: vec![],
-                                        nested_compositor: "".to_string(),
+                                        nested_compositor: LaunchCompositors::Kwin,
                                         display_index: 0,
                                         move_handle_sel_idx: None,
                                     }
@@ -966,7 +991,7 @@ impl PartyApp {
                             }).collect::<Vec<String>>()
                     ) {
                         Some(a) => a.to_owned(),
-                        None => format!("Profile name - {}", fastrand::u32(10000..99999)),
+                        None => format!(".Auto profile - {}", fastrand::u32(10000..99999)),
                     }
                 }
             });
@@ -978,12 +1003,9 @@ impl PartyApp {
                 let inst_editing = &mut disp_editing.instances[prof_loc.1];
 
                 ui.color_edit_button_srgba(&mut inst_editing.color);
-                // let _ = egui::color_picker::color_picker_color32(ui, &mut , egui::color_picker::Alpha::Opaque);
-                // ui.add()
             });
 
             ui.separator();
-
             for input_dev in &self.input_devices {
                 
                 let already_used = self.launch_displays.iter().enumerate().any(|(display_idx, check_display)| {
@@ -1003,17 +1025,50 @@ impl PartyApp {
                 .color(
                     match (input_dev.enabled(), input_dev.has_button_held(), already_used) {
                         (false, _,    false ) => egui::Color32::RED,
-                        (true,  true, false ) => egui::Color32::GREEN,
-                        (_,     _,    _     ) => egui::Color32::BLUE
+                        (false, _,    true  ) => egui::Color32::LIGHT_RED,
+                        
+                        (true, false, false ) => egui::Color32::GRAY,
+                        (true, true,  false ) => egui::Color32::WHITE,
+
+                        (true, false, true  ) => egui::Color32::BLUE,
+                        (true, true,  true  ) => egui::Color32::LIGHT_BLUE,
                     }
                 );
 
-                ui.label(dev_text);
-            }
+                let generated_hover_text = match (input_dev.enabled(), input_dev.has_button_held(), already_used) {
+                    (false, _,    false ) => "Disabled",
+                    (false, _,    true  ) => "Disabled\nAlready used",
+                    
+                    (true, false, false ) => "Avaliable",
+                    (true, true,  false ) => "Avaliable\nInput pressed",
 
-            // if inst_editing.temp_profile {
-            //     saved_profiles
-            // }
+                    (true, false, true  ) => "Already used",
+                    (true, true,  true  ) => "Already used\nInput pressed",
+                };
+
+
+
+                let disp_editing = &mut self.launch_displays[prof_loc.0];
+                let inst_editing = &mut disp_editing.instances[prof_loc.1];
+
+                let instance_dev_prev_pos = inst_editing.devices.iter().position(|x| x==&input_dev.hash());
+                let mut instance_dev_checked = instance_dev_prev_pos != None;
+
+
+                ui.checkbox(&mut instance_dev_checked, dev_text).on_hover_text(generated_hover_text);
+
+
+                match (instance_dev_checked, instance_dev_prev_pos) {
+                    (true, None) => {
+                        inst_editing.devices.push(input_dev.hash());
+                    },
+                    (false, Some(remove_idx)) => {
+                        inst_editing.devices.swap_remove(remove_idx);
+                    },
+                    (_, _) => {},
+                }
+
+            }
 
         });
     }

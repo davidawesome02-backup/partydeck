@@ -106,18 +106,18 @@ impl PartyApp {
                         split_dir_width: true,
                     }),
                     instances: vec![
-                        Instance {
-                            devices: vec![],
-                            profname: "Profile 1".to_string(),
-                            color: egui::Color32::RED
-                        },
-                        Instance {
-                            devices: vec![],
-                            profname: "Profile 2".to_string(),
-                            color: egui::Color32::BLUE
-                        }
+                        // Instance {
+                        //     devices: vec![],
+                        //     profname: "Profile 1".to_string(),
+                        //     color: egui::Color32::RED
+                        // },
+                        // Instance {
+                        //     devices: vec![],
+                        //     profname: "Profile 2".to_string(),
+                        //     color: egui::Color32::BLUE
+                        // }
                     ],
-                    nested_compositor: "".to_string(),
+                    nested_compositor: LaunchCompositors::Kwin,
                     display_index: 0,
                     move_handle_sel_idx: None
                 }

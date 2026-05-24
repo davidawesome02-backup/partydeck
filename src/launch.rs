@@ -131,11 +131,11 @@ pub fn launch_game(
     for display in &mut *displays {
         if let Some(compositor) = &mut display.compositor_proc {
             if compositor.try_wait()? != None {
-                println!("[partydeck] Compositor ({}) died - Skipping instances!", display.nested_compositor);
+                println!("[partydeck] Compositor ({}) died - Skipping instances!", display.nested_compositor.display_name());
                 continue;
             }
         }
-        println!("[partydeck] Spawning instances for compositor: '{}'...", display.nested_compositor);
+        println!("[partydeck] Spawning instances for compositor: '{}'...", display.nested_compositor.display_name());
 
         for instance in &mut display.instances {
             if let Some(command) = &mut instance.command {
@@ -403,7 +403,7 @@ pub fn generate_launch_command(
     if cfg.gamescope_force_grab_cursor {
         cmd.arg("--force-grab-cursor");
     }
-    if cfg.gamescope_sdl_backend && display.nested_compositor != "" {
+    if cfg.gamescope_sdl_backend { //  && display.nested_compositor != ""
         cmd.arg("--backend=sdl");
         cmd.arg(format!("--display-index={}", display.display_index));
     }
