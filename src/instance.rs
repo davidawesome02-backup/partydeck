@@ -20,12 +20,12 @@ impl LaunchCompositors {
             LaunchCompositors::Native =>    "Native",
         }.to_string()
     }
-    pub fn launch_executable(&self) -> String {
+    pub fn launch_executable(&self) -> Option<String> {
         match self {
-            LaunchCompositors::River =>     "river",
-            LaunchCompositors::Kwin =>      "kwin",
-            LaunchCompositors::Native =>    "",
-        }.to_string()
+            LaunchCompositors::River =>     Some("river".to_string()),
+            LaunchCompositors::Kwin =>      Some("kwin_wayland".to_string()),
+            LaunchCompositors::Native =>    None,
+        }
     }
 }
 

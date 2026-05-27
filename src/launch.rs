@@ -248,7 +248,7 @@ pub fn start_compositors_and_generate_commands(
     let mut full_count_idx = 0;
     for display in displays {
         let (way_display_name, x11_display_name, compositor_proc, instances_res) =
-            if let Some(compositor) = &cfg.nested_compositor {
+            if let Some(compositor) = &display.nested_compositor.launch_executable() {
                 let (way_name, x11_name, monitor, compositor_proc) =
                     spawn_comp_and_get_display(compositor, &real_monitors[display.display_index])
                         .ok_or("Failed to spawn nested compositor and get display names")?;

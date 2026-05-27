@@ -453,17 +453,13 @@ impl PartyApp {
         // }
     }
 
-    #[allow(dead_code)]
-    pub fn prepare_game_launch(&'static mut self ) {
+    pub fn prepare_game_launch(&mut self ) {
         let handler = if let Some(h) = self.handler_lite.clone() {
             h
         } else {
             cur_handler!(self).to_owned()
         };
 
-        // let mut instances = self.instances.clone();
-        // let dev_infos: Vec<DeviceInfo> = self.input_devices.iter().map(|p| p.info()).collect();
-        // self.input_devices
 
         let cfg = self.options.clone();
         let _ = save_cfg(&cfg);

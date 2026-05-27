@@ -424,7 +424,10 @@ impl PartyApp {
                         launch_enabled, egui::Button::new("Launch")
                     ).on_disabled_hover_text("Please add instances")
                 ).clicked() {
-                    println!("Launch not impl")
+                    println!("Launch not impl");
+
+                    // TODO finish
+                    self.prepare_game_launch();
                 }
             });
         });
@@ -453,8 +456,6 @@ impl PartyApp {
 
                     ui.separator();
 
-                    // ui.label("Display settings");
-
                     let mut current_used_profiles_for_others =
                             self.launch_displays.iter().flat_map(|check_display| {
                                 check_display.instances.iter().map(move |check_instance| {
@@ -465,12 +466,7 @@ impl PartyApp {
 
                     let current_display = &mut self.launch_displays[self.launch_display_idx];
 
-
-                    
-
                     if ui.button("New instance").clicked() {
-
-
 
                         let new_prof_name = match fastrand::choice(
                                 GUEST_NAMES.iter().filter_map(|guest_name_check| {
@@ -708,8 +704,6 @@ impl PartyApp {
                                         ui.style_mut().spacing.item_spacing.x = 3.0;
 
 
-                                        // let current_display = &mut self.launch_displays[self.launch_display_idx].move_handle_sel_idx;
-
                                         ui.scope(|ui| {
                                             ui.style_mut().visuals.widgets.active.weak_bg_fill = egui::Color32::LIGHT_GREEN;
                                             if display_sel_handle == Some(idx_instance) {
@@ -748,8 +742,6 @@ impl PartyApp {
             };
 
 
-
-
             // WARNING below this line, we may not execute because the ordering of swaps or removals will interupt eachother.
             let current_display = &mut self.launch_displays[self.launch_display_idx];
             
@@ -783,137 +775,6 @@ impl PartyApp {
         });
 
         self.display_page_instanes_edit_displays(ui);
-
-
-        // ui.set_height(ui.available_height());
-        // ui.horizontal(|ui| {
-        //     ui.set_height(ui.available_height());
-            
-        //     // let dnd_frame: egui::Frame = egui::Frame::group(ui.style()).inner_margin(0); 
-        //     // dnd_frame.show(ui, |ui| {
-        //     //     let visual_data = ui.visuals_mut();
-        //     //     visual_data.widgets.inactive.bg_fill = egui::Color32::RED;
-        //     // })
-        //     for i in 1..20 {
-        //         ui.vertical(|ui| {
-        //             for o in 1..20 {
-        //                 ui.button("hi");
-        //             };
-        //         });
-            
-        //     }
-        // });
-
-        /* 
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::Image::new(egui::include_image!("../../res/BTN_SOUTH.png")).max_height(12.0),
-            );
-            ui.label("[Z]");
-            ui.add(
-                egui::Image::new(egui::include_image!("../../res/MOUSE_RIGHT.png"))
-                    .max_height(12.0),
-            );
-            let add_text = match self.instance_add_dev {
-                None => "Add New Instance",
-                Some(i) => &format!("Add to Instance {}", i + 1),
-            };
-            ui.label(add_text);
-
-            ui.add(egui::Separator::default().vertical());
-
-            ui.add(
-                egui::Image::new(egui::include_image!("../../res/BTN_EAST.png")).max_height(12.0),
-            );
-            ui.label("[X]");
-            let remove_text = match self.instance_add_dev {
-                None => "Remove",
-                Some(_) => "Cancel",
-            };
-            ui.label(remove_text);
-
-            ui.add(egui::Separator::default().vertical());
-        });
-
-        ui.separator();
-
-        let mut devices_to_remove: Vec<(usize, usize)> = Vec::new();
-        for (i, instance) in &mut self.instances.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                ui.label(format!("{}", i + 1));
-
-                ui.label("👤");
-                egui::ComboBox::from_id_salt(format!("{i}")).show_index(
-                    ui,
-                    &mut instance.profselection,
-                    self.profiles.len(),
-                    |i| self.profiles[i].clone(),
-                );
-
-                if self.options.gamescope_sdl_backend {
-                    ui.label("🖵");
-                    egui::ComboBox::from_id_salt(format!("monitors{i}")).show_index(
-                        ui,
-                        &mut instance.monitor,
-                        self.monitors.len(),
-                        |i| self.monitors[i].name(),
-                    );
-                }
-
-                if self.instance_add_dev == None {
-                    let invitebtn = ui.add(egui::Button::image_and_text(
-                        egui::include_image!("../../res/BTN_NORTH.png"),
-                        "[A] Invite New Device",
-                    ));
-                    if invitebtn.clicked() {
-                        self.instance_add_dev = Some(i);
-                    }
-                } else if self.instance_add_dev == Some(i) {
-                    ui.label("Adding new device...");
-                    if ui.button("🗙").clicked() {
-                        self.instance_add_dev = None;
-                    }
-                }
-            });
-            for &dev in instance.devices.iter() {
-                let mut dev_text = RichText::new(format!(
-                    "{} {}",
-                    self.input_devices[dev].emoji(),
-                    self.input_devices[dev].fancyname()
-                ));
-
-                if self.input_devices[dev].has_button_held() {
-                    dev_text = dev_text.strong();
-                }
-
-                ui.horizontal(|ui| {
-                    ui.label("    ");
-                    ui.label(dev_text);
-                    if ui.button("🗑").clicked() {
-                        devices_to_remove.push((i, dev));
-                    }
-                });
-            }
-        }
-
-        for (i, d) in devices_to_remove {
-            self.remove_device_instance(i, d);
-        }
-
-        if self.instances.len() > 0 {
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::Image::new(egui::include_image!("../../res/BTN_START.png"))
-                            .max_height(16.0),
-                    );
-                    if ui.button("Start").clicked() {
-                        self.prepare_game_launch();
-                    }
-                });
-                ui.separator();
-            });
-        }*/
     }
 
 
