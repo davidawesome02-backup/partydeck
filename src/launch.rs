@@ -13,6 +13,7 @@ use eframe::epaint::tessellator::path;
 use nix::sys::signal::{Signal, kill};
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::Pid;
+use tokio::task::JoinSet;
 use std::collections::HashSet;
 
 use crate::layout_manager::{WindowPostion, kwin_dbus_start_script, spawn_comp_and_get_display};
@@ -119,13 +120,16 @@ pub fn launch_game(
     }
 */
 
+    // let mut tasks = JoinSet::new();
+
     start_compositors_and_generate_commands(
         h,
         input_devices,
         displays,
         cfg,
-        real_monitors
+        real_monitors,
     )?;
+
 
     // I dont know why &mut * works, but we just accept the rust magic
     for display in &mut *displays {
@@ -194,7 +198,7 @@ pub fn check_for_and_kill_games(
         }
 
         if !display_has_alive_games && comp_alive && let Some(compositor) = &mut display.compositor_proc {
-            compositor.kill();
+            let _ = compositor.kill();
         }
     }
 
