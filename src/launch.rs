@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 
 use crate::app::{PadFilterType, PartyConfig};
 use crate::{handler::*, input};
@@ -14,7 +15,8 @@ use nix::sys::signal::{Signal, kill};
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::Pid;
 use tokio::task::JoinSet;
-use std::collections::HashSet;
+use zbus::conn;
+use std::collections::{HashMap, HashSet};
 
 use crate::layout_manager::{WindowPostion, kwin_dbus_start_script, spawn_comp_and_get_display};
 
@@ -46,80 +48,7 @@ pub fn launch_game(
     cfg: &PartyConfig,
     real_monitors: &Vec<Monitor>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    
-
-/* 
-    let mut wait_processes: HashSet<Pid> = HashSet::new();
-
-    let new_cmds = launch_cmds(h, input_devices, instances, cfg)?;
-    print_launch_cmds(&new_cmds);
-
-    if cfg.enable_kwin_script {
-        let script = match cfg.vertical_two_player {
-            true => "splitscreen_kwin_vertical.js",
-            false => "splitscreen_kwin.js",
-        };
-
-        kwin_dbus_start_script(PATH_RES.join(script))
-            .map_err(|e| format!("Failed to start KWin script: {}", e))?;
-    }
-
-    let sleep_time = match h.pause_between_starts {
-        Some(f) => f,
-        None => 0.5,
-    };
-
-    let mut handles = Vec::new();
-
-    let mut i = 0;
-    for mut cmd in new_cmds {
-        if let Some(disp) = &way_display_name {
-            cmd.env("WAYLAND_DISPLAY", disp);
-            // cmd.env("XDG_SESSION_TYPE","WAYLAND");
-            // cmd.env("SDL_VIDEODRIVER", "wayland");
-        }
-        if let Some(disp) = &x11_display_name {
-            cmd.env("DISPLAY", disp);
-        }
-        let handle = cmd
-            .spawn()
-            .map_err(|e| format!("Game argument error: {}", e))?;
-        wait_processes.insert(Pid::from_raw(handle.id() as i32));
-        
-        handles.push(handle);
-
-        if i < instances.len() - 1 {
-            std::thread::sleep(std::time::Duration::from_secs_f64(sleep_time));
-        }
-        i += 1;
-    }
-
-
-
-    loop {
-        match waitpid(None, None)? {
-            WaitStatus::Exited(pid, _) | WaitStatus::Signaled(pid, _, _) => {
-                println!("Child pid {} died!", pid);
-                wait_processes.remove(&pid);
-                println!("CHILD PROCESSES LEFT: {}", wait_processes.len());
-                if wait_processes.len() == 0 || Some(pid) == compositor_pid {
-                    break;
-                }
-            }
-            WaitStatus::StillAlive => continue,
-            _ => continue,
-        }
-    }
-
-    wait_processes
-        .iter()
-        .for_each(|&pid| _ = kill(pid, Signal::SIGTERM));
-
-    if let Some(comp_pid) = compositor_pid {
-        let _ = kill(comp_pid, Signal::SIGTERM);
-    }
-*/
-
+   
     // let mut tasks = JoinSet::new();
 
     start_compositors_and_generate_commands(
@@ -154,23 +83,126 @@ pub fn launch_game(
         }
     }
 
-    loop {
-        match waitpid(None, None)? {
-            WaitStatus::Exited(_pid, _) | WaitStatus::Signaled(_pid, _, _) => {
-                if !check_for_and_kill_games(displays)? {
-                    break;
+    let _ = tokio::runtime::Runtime::new()?.block_on(async {
+        let connection = zbus::Connection::session().await?;
+        connection
+                .request_name_with_flags(
+                    "com.partydeck.layoutManager", 
+                    zbus::fdo::RequestNameFlags::ReplaceExisting.into()
+                ).await?;
+        
+        let layout_mgr_displays: Arc<Mutex<Vec<(Box<dyn crate::layout_manager::LayoutWindows + Send>, Vec<u32>)>>> = 
+            Arc::new(Mutex::new(
+                displays.iter().map(|disp| {
+                    (
+                        disp.layout.clone_box(),
+                        disp.instances.iter().filter_map(|inst| {
+                            if let Some(proc) = &inst.game_proc {
+                                Some(proc.id())
+                            } else {
+                                None
+                            }
+                        }).collect()
+                    )
+                }).collect()
+            ));
+
+        connection.object_server().at("/com/partydeck/layoutManager", LayoutManagerDbus { displays: layout_mgr_displays }).await?;
+
+        println!("[partydeck] D-Bus service started");
+        
+       loop {
+            // Maybe switch to pidfd and `select_all` to avoid waiting here.
+            match waitpid(None, Some(nix::sys::wait::WaitPidFlag::WNOHANG))? {
+                WaitStatus::Exited(_pid, _) | WaitStatus::Signaled(_pid, _, _) => {
+                    if !check_for_and_kill_games(displays)? {
+                        break;
+                    }
+                }
+                WaitStatus::StillAlive => {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                _ => {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
             }
-            WaitStatus::StillAlive => continue,
-            _ => continue,
         }
-    }
+
+        Ok::<(), Box<dyn std::error::Error>>(()) 
+    });
 
     // Todo kill all the games and compositors. Should already be done above, but might as well do it again, and force it.
 
 
     Ok(())
 }
+
+
+// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+// pub struct NumberQuad(pub i32, pub i32, pub i32, pub i32);
+
+
+
+
+struct LayoutManagerDbus {
+    displays: Arc<Mutex<Vec<(Box<dyn crate::layout_manager::LayoutWindows + Send>, Vec<u32>)>>>
+}
+
+#[zbus::interface(name = "com.partydeck.layoutManager")]
+impl LayoutManagerDbus {
+    pub fn process_layout(&self, width: i32, height: i32, pids: Vec<zbus::zvariant::OwnedValue>) -> Vec<(u32,u32,u32,u32)> {
+        let disp_lock = match self.displays.lock() {
+            Ok(disp_lock) => disp_lock,
+            Err(_) => {
+                eprintln!("Display mutex failed.");
+                return Vec::new();
+            }
+        };
+        // println!("PIDS: {:#?}, disp: {:#?}", pids, disp_lock.iter().map(|a| a.1.clone()).collect::<Vec<_>>());
+
+        let pids: Vec<u32> = pids
+            .into_iter()
+            .filter_map(|val| {
+                // This may cause problems if your pids get high enough // TODO refactor if you can find how to
+                // Pass JS values as u32 (or actaully underlying u64 instead of just i32).
+                val.downcast_ref::<u32>().or_else(|_| val.downcast_ref::<i32>().map(|a| a as u32)).ok()
+            }).collect();
+
+        let target_display = disp_lock.iter().find(|disp| {
+            disp.1.iter().any(|pid| pids.contains(pid))
+        });
+
+        let Some((layout_manager, display_pids)) = target_display else {
+            println!("NOT FOUND IN LAYOUT MANAGER");
+            return Vec::new();
+        };
+
+        let window_count = pids.iter().filter(|pid| display_pids.contains(pid)).count() as u32;
+        let mut layout_iter = layout_manager.layout(window_count, width as u32, height as u32).into_iter();
+
+        let mut pid_to_layout: HashMap<u32, _> = HashMap::with_capacity(display_pids.len());
+
+        for pid in display_pids {
+            if let Some(pos) = layout_iter.next() {
+                pid_to_layout.insert(*pid, pos);
+            }
+        }
+
+        // println!("Should be returning.");
+
+        pids
+            .iter()
+            .map(|pid| {
+                if let Some(pos) = pid_to_layout.get(pid) {
+                    (pos.x, pos.y, pos.w, pos.h)
+                } else {
+                    (0, 0, 0, 0)
+                }
+            })
+            .collect()
+    }
+}
+
 
 pub fn check_for_and_kill_games(
     displays: &mut Vec<RunningLaunchDisplay>
