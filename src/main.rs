@@ -16,11 +16,13 @@ use crate::profiles::remove_guest_profiles;
 use crate::util::*;
 
 fn main() -> eframe::Result {
-    if std::env::args().any(|arg| arg == "--help") {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|arg| arg == "--help") {
         println!("{}", USAGE_TEXT);
         std::process::exit(0);
     }
-    
+
     let monitors = get_monitors_errorless();
 
     println!("[partydeck] Monitors detected:");
@@ -31,40 +33,6 @@ fn main() -> eframe::Result {
             monitor.width(),
             monitor.height()
         );
-    }
-
-    let args: Vec<String> = std::env::args().collect();
-
-    if std::env::args().any(|arg| arg == "--kwin") {
-        let args: Vec<String> = std::env::args().filter(|arg| arg != "--kwin").collect();
-
-        let (w, h) = (monitors[0].width(), monitors[0].height());
-        let mut cmd = std::process::Command::new("kwin_wayland");
-
-        cmd.arg("--xwayland");
-        cmd.arg("--width");
-        cmd.arg(w.to_string());
-        cmd.arg("--height");
-        cmd.arg(h.to_string());
-        cmd.arg("--exit-with-session");
-        cmd.env("PARTYDECK_SCREEN_WIDTH", w.to_string());
-        cmd.env("PARTYDECK_SCREEN_HEIGHT", h.to_string());
-        let args_string = args
-            .iter()
-            .map(|arg| format!("\"{}\"", arg))
-            .collect::<Vec<String>>()
-            .join(" ");
-        cmd.arg(args_string);
-
-        println!("[partydeck] Launching kwin session: {:?}", cmd);
-
-        match cmd.spawn() {
-            Ok(_) => std::process::exit(0),
-            Err(e) => {
-                eprintln!("[partydeck] Failed to start kwin_wayland: {}", e);
-                std::process::exit(1);
-            }
-        }
     }
 
     let mut exec = String::new();
@@ -92,7 +60,7 @@ fn main() -> eframe::Result {
         None
     };
 
-    let fullscreen = std::env::args().any(|arg| arg == "--fullscreen");
+    let fullscreen = args.iter().any(|arg| arg == "--fullscreen");
 
     std::fs::create_dir_all(PATH_PARTY.join("handlers"))
         .expect("Failed to create handlers directory");
@@ -151,5 +119,4 @@ Options:
     --exec <executable>   Execute the specified executable in splitscreen. If this isn't specified, PartyDeck will launch in the regular GUI mode.
     --args [args]         Specify arguments for the executable to be launched with. Must be quoted if containing spaces.
     --fullscreen          Start the GUI in fullscreen mode
-    --kwin                Launch PartyDeck inside of a KWin session
 "#;

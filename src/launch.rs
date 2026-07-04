@@ -39,14 +39,6 @@ pub fn launch_game(
     let new_cmds = launch_cmds(h, input_devices, instances, cfg)?;
     print_launch_cmds(&new_cmds);
 
-    if cfg.enable_kwin_script {
-        let script = match cfg.vertical_two_player {
-            true => "splitscreen_kwin_vertical.js",
-            false => "splitscreen_kwin.js",
-        };
-
-        kwin_dbus_start_script(PATH_RES.join(script)).map_err(|e| format!("Failed to start KWin script: {}", e))?;
-    }
 
     let sleep_time = match h.pause_between_starts {
         Some(f) => f,
@@ -193,10 +185,6 @@ pub fn launch_cmds(
         ]);
         if cfg.gamescope_force_grab_cursor {
             cmd.arg("--force-grab-cursor");
-        }
-        if cfg.gamescope_sdl_backend {
-            cmd.arg("--backend=sdl");
-            cmd.arg(format!("--display-index={}", instance.monitor));
         }
         if cfg.kbm_support {
             let mut instance_has_keyboard = false;

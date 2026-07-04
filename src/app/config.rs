@@ -21,11 +21,7 @@ fn default_true() -> bool {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PartyConfig {
     #[serde(default = "default_true")]
-    pub enable_kwin_script: bool,
-    #[serde(default = "default_true")]
     pub gamescope_fix_lowres: bool,
-    #[serde(default = "default_true")]
-    pub gamescope_sdl_backend: bool,
     #[serde(default)]
     pub gamescope_force_grab_cursor: bool,
     #[serde(default = "default_true")]
@@ -36,8 +32,6 @@ pub struct PartyConfig {
     pub proton_separate_pfxs: bool,
     #[serde(default = "default_true")]
     pub proton_wow64: bool,
-    #[serde(default)]
-    pub vertical_two_player: bool,
     #[serde(default)]
     pub pad_filter_type: PadFilterType,
     #[serde(default)]
@@ -53,15 +47,12 @@ pub struct PartyConfig {
 impl Default for PartyConfig {
     fn default() -> Self {
         PartyConfig {
-            enable_kwin_script: true,
             gamescope_fix_lowres: true,
-            gamescope_sdl_backend: true,
             gamescope_force_grab_cursor: false,
             kbm_support: true,
             proton_version: "".to_string(),
             proton_separate_pfxs: true,
             proton_wow64: true,
-            vertical_two_player: false,
             pad_filter_type: PadFilterType::NoSteamInput,
             allow_multiple_instances_on_same_device: false,
             profile_unique_dirs: true,

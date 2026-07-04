@@ -112,12 +112,5 @@ pub fn get_monitors_errorless() -> Vec<Monitor> {
         monitors.push(Monitor {name: "Partydeck Virtual Monitor".to_string(), width: 1920, height: 1080});
     }
 
-    if let (Ok(w), Ok(h)) = (std::env::var("PARTYDECK_SCREEN_WIDTH"), std::env::var("PARTYDECK_SCREEN_HEIGHT")) {
-        if let (Ok(w), Ok(h)) = (w.parse::<u32>(), h.parse::<u32>()) {
-            monitors[0].width = w;
-            monitors[0].height = h;
-        }
-    }
-
     monitors
 }
