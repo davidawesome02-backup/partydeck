@@ -12,7 +12,7 @@ use crate::monitor::Monitor;
 use crate::profiles::*;
 use crate::util::*;
 
-use eframe::egui::{self, Key};
+use eframe::egui::{self, Key, Ui};
 
 #[derive(Eq, PartialEq)]
 pub enum MenuPage {
@@ -148,8 +148,8 @@ impl eframe::App for PartyApp {
         }
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::TopBottomPanel::top("menu_nav_panel").show(ctx, |ui| {
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        egui::TopBottomPanel::top("menu_nav_panel").show(ui.ctx(), |ui| {
             if self.task.is_some() {
                 ui.disable();
             }
@@ -160,7 +160,7 @@ impl eframe::App for PartyApp {
             egui::SidePanel::left("games_panel")
                 .resizable(false)
                 .exact_width(200.0)
-                .show(ctx, |ui| {
+                .show(ui.ctx(), |ui| {
                     if self.task.is_some() {
                         ui.disable();
                     }
@@ -169,22 +169,23 @@ impl eframe::App for PartyApp {
         }
 
         if self.cur_page == MenuPage::Instances {
-            egui::SidePanel::right("devices_panel")
+            egui::Panel::right("devices_panel")
                 .resizable(false)
-                .exact_width(180.0)
-                .show(ctx, |ui| {
+                .exact_size(180.0)
+                .show(ui.ctx(), |ui| {
                     if self.task.is_some() {
                         ui.disable();
                     }
-                    self.display_panel_right(ui, ctx);
+                    let ctx = ui.ctx().clone();
+                    self.display_panel_right(ui, &ctx);
                 });
         }
 
         if (self.cur_page != MenuPage::Home) && (self.cur_page != MenuPage::Instances) {
-            self.display_panel_bottom(ctx);
+            self.display_panel_bottom(ui.ctx());
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui.ctx(), |ui| {
             if self.task.is_some() {
                 ui.disable();
             }
@@ -217,7 +218,7 @@ impl eframe::App for PartyApp {
             egui::Area::new("loading".into())
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .interactable(false)
-                .show(ctx, |ui| {
+                .show(ui.ctx(), |ui| {
                     egui::Frame::NONE
                         .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 192))
                         .corner_radius(6.0)
@@ -231,8 +232,8 @@ impl eframe::App for PartyApp {
                         });
                 });
         }
-        if ctx.input(|input| input.focused) {
-            ctx.request_repaint_after(std::time::Duration::from_millis(33)); // 30 fps
+        if ui.input(|input| input.focused) {
+            ui.request_repaint_after(std::time::Duration::from_millis(33)); // 30 fps
         }
     }
 }

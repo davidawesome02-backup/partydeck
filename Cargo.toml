@@ -11,8 +11,8 @@ build_gamescope = []
 
 [dependencies]
 dialog = "0.3.0"
-eframe = { version = "0.32.1", features = ["x11", "wayland", "default_fonts", "glow"], default-features = false}
-egui_extras = { version = "0.32.1", features = ["file", "image"], default-features = false }
+eframe = { version = "0.34.3", features = ["x11", "wayland", "default_fonts", "glow"], default-features = false}
+egui_extras = { version = "0.34.3", features = ["file", "image"], default-features = false }
 evdev = "=0.13.0"
 fastrand = "2.3.0"
 image = { version = "0.25.8", features = ["jpeg", "png"], default-features = false }
@@ -32,6 +32,12 @@ nix = { version = "0.30.1", default-features = false, features = ["poll", "fs", 
 wayland-client = "0.31.11"
 wayland-scanner = "0.31.7"
 wayland-backend = "0.3.11"
+
+egui-winit = { version = "0.34.3", features = ["x11", "wayland"], default-features = false }
+glutin = "0.32"
+glutin-winit = { version = "0.5", features = ["egl", "x11", "wayland"], default-features = false}
+khronos-egl = { version = "6", features = ["dynamic"] }
+pipewire = "0.10"
 
 [build-dependencies]
 reqwest = { version = "0.12.15", features = ["blocking", "json"], optional = true }

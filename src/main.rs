@@ -8,6 +8,8 @@ mod monitor;
 mod paths;
 mod profiles;
 mod util;
+mod video;
+
 
 use crate::app::*;
 use crate::handler::Handler;
@@ -15,6 +17,8 @@ use crate::monitor::{get_monitors_errorless, get_x11_dpi_scale};
 use crate::paths::PATH_PARTY;
 use crate::profiles::remove_guest_profiles;
 use crate::util::*;
+
+use crate::video::pipewire::*;
 
 fn main() -> eframe::Result {
     if std::env::args().any(|arg| arg == "--help") {
