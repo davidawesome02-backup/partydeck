@@ -51,7 +51,11 @@ use super::egl::{EglApi, EglError, EglImage};
 
 // pub use app::{run, App, BoxError, CreationContext};
 
-use crate::video::{PipewireCommand, PipewireID, PipewireStream};
+use crate::video::pipewire::PipewireCommand::ConnectVid;
+use crate::video::{
+    pipewire::{PipewireCommand, PipewireID, PipewireStream},
+    app_wrapper::CreationContext
+};
 
 // Re-exported so a consumer can build their UI and handle GL teardown using the
 // exact versions this crate links, without adding egui/glow to their Cargo.toml.
@@ -364,9 +368,12 @@ impl PipewireVideo {
     /// import extensions are unavailable, or if GL objects or the capture thread
     /// cannot be created.
     pub fn new(cc: &CreationContext, target: PipewireID, sender: pw::channel::Sender<PipewireCommand>, streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<PipewireStream>>>>>) -> Result<Self, Error> {
-        let Some(ref gl) = cc.gl else {return Err(Error::NoGlowContext);};
+        // let Some(ref gl) = cc.gl else {return Err(Error::NoGlowContext);};
+        let gl = cc.gl.as_ref();
         let renderer = Renderer::new(&gl)?;
         let renderer = Arc::new(Mutex::new(renderer));
+
+        sender.send(ConnectVid(target)); //todo properly do this.
 
         Ok(
             PipewireVideo {

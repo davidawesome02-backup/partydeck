@@ -66,6 +66,12 @@ impl PartyApp {
                 self.sys_monitors = get_monitors_errorless();
             }
 
+            if ui.button("test").clicked() {
+                if let Some(temp_window_open) = &mut self.temp_window_open {
+                    temp_window_open.1 = !temp_window_open.1;
+                }
+            }
+
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("❌").clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

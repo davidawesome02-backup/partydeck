@@ -3,6 +3,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 
 use super::config::*;
+use crate::video::app_wrapper::CreationContext;
+use crate::video::pipewire::PipewireInstance;
+use crate::video::video::PipewireVideo;
 use crate::{handler::*, video};
 use crate::input::*;
 use crate::instance::*;
@@ -12,7 +15,8 @@ use crate::monitor::Monitor;
 use crate::profiles::*;
 use crate::util::*;
 
-use eframe::egui::{self, Key, Ui};
+use eframe::egui::{self, Key, Ui, ViewportId};
+use zbus::zvariant::Optional;
 
 #[derive(Eq, PartialEq)]
 pub enum MenuPage {
@@ -60,6 +64,11 @@ pub struct PartyApp {
     #[allow(dead_code)]
     pub task: Option<std::thread::JoinHandle<()>>,
 
+    pub cc: CreationContext,
+    pub pipewire_context: Option<PipewireInstance>,
+
+    pub temp_window_open: Option<(PipewireVideo, bool)>
+
     // pub current_editing_instance: Option<(LaunchDisplay)>, // Not sure if this should be a LaunchDisplay or a index into existing or what...
 }
 
@@ -70,7 +79,7 @@ macro_rules! cur_handler {
 }
 
 impl PartyApp {
-    pub fn new(monitors: Vec<Monitor>, handler_lite: Option<Handler>) -> Self {
+    pub fn new(monitors: Vec<Monitor>, handler_lite: Option<Handler>, cc: CreationContext) -> Self {
         let options = load_cfg();
         let input_devices = scan_input_devices(&options.pad_filter_type);
         let handlers = match handler_lite {
@@ -81,6 +90,10 @@ impl PartyApp {
             Some(_) => MenuPage::Instances,
             None => MenuPage::Home,
         };
+
+        let pipewire_context = PipewireInstance::new().inspect_err(|e| {eprintln!("Failed to start pipewire thread: {e}")}).ok(); 
+
+        // let temp_window_open = (PipewireVideo::new(&cc.clone(), 70, pipewire_context?.sender, streams), false);
 
         let mut app = Self {
             installed_steamapps: get_installed_steamapps(),
@@ -124,7 +137,16 @@ impl PartyApp {
             ],
             launch_display_idx: 0,
             model_temp_modify_profile: None,
+            cc: cc.clone(),
+            pipewire_context,
+            temp_window_open: None
         };
+        
+        if let Some(ref pipewire_context) = app.pipewire_context {
+            if let Ok(pipewire_temp) = PipewireVideo::new(&app.cc, 70, pipewire_context.channel.clone(), pipewire_context.streams.clone()) {
+                app.temp_window_open = Some((pipewire_temp, false));
+            }
+        }
 
         if app.options.check_for_updates {
             let needs_update = app.needs_update.clone();
@@ -149,6 +171,84 @@ impl video::app_wrapper::App for PartyApp {
     // }
 
     fn ui(&mut self, ui: &mut Ui) {
+        if let Some(temp_window_open) = &mut self.temp_window_open {
+            if temp_window_open.1 {
+                let ctx = ui.ctx().clone();
+                let viewport_id = ViewportId::from_hash_of("pipewire-video-window");
+                let builder = egui::ViewportBuilder::default()
+                    .with_title("gamescope stream (egui viewport)")
+                    .with_inner_size([960.0, 600.0]);
+
+                
+                {
+                    let mut gl_state = self.cc.glstate.borrow_mut();
+                    if let Some(monitors) = gl_state.get_monitors() {
+                        gl_state.request_fullscreen(&viewport_id, Some(egui_winit::winit::window::Fullscreen::Borderless(Some(monitors[0].clone()))));
+                    }
+                    // We can use gl_state here, but cant call show_viewport with it still borrowed. We must drop before.
+                    drop(gl_state);
+                }
+
+                ctx.show_viewport_immediate(viewport_id, builder, |ui, _class| {
+                    
+                    // ui.input(|test: &egui::InputState| {
+                    //     test.viewport().events.
+                    // })
+
+                    // Honor the native window's close button.
+                    if ui.input(|i| i.viewport().close_requested()) {
+                        temp_window_open.1 = false;
+                        // self.video.stop();
+                        return;
+                    }
+
+                    // Ordinary egui widgets coexist with the video in this window.
+                    ui.horizontal(|ui| {
+                        ui.strong("Live stream");
+                        // let (color, text) = if self.video.connected() {
+                        //     (egui::Color32::from_rgb(0x3c, 0xb3, 0x71), "connected")
+                        // } else {
+                        //     (egui::Color32::from_rgb(0xa0, 0xa0, 0xa0), "idle")
+                        // };
+                        // ui.colored_label(color, text);
+                        // if let Some((w, h)) = self.video.native_size() {
+                        //     ui.weak(format!("{w}x{h}"));
+                        // }
+                    });
+                    // ui.horizontal(|ui| {
+                    //     if ui.button("Play").clicked() {
+                    //         self.video.play();
+                    //     }
+                    //     if ui.button("Stop").clicked() {
+                    //         self.video.stop();
+                    //     }
+                    // });
+                    ui.separator();
+
+                    // The video fills the rest, preserving aspect ratio if known.
+                    let avail = ui.available_size();
+                    let size = avail;
+                    // match self.video.native_size() {
+                    //     Some((w, h)) if w > 0 && h > 0 => {
+                    //         let aspect = w as f32 / h as f32;
+                    //         let mut s = avail;
+                    //         if s.x / s.y > aspect {
+                    //             s.x = s.y * aspect;
+                    //         } else {
+                    //             s.y = s.x / aspect;
+                    //         }
+                    //         s
+                    //     }
+                    //     _ => avail,
+                    // };
+                    ui.vertical_centered(|ui| {
+                        temp_window_open.0.ui(ui, size);
+                    });
+                });
+            }
+        }
+
+
         egui::TopBottomPanel::top("menu_nav_panel").show(ui.ctx(), |ui| {
             if self.task.is_some() {
                 ui.disable();

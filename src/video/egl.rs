@@ -17,7 +17,7 @@ use std::sync::RwLockReadGuard;
 
 use khronos_egl as egl;
 
-use crate::video::PipewireStream;
+use crate::video::pipewire::PipewireStream;
 
 /// EGL enum values and the DRM protocol constants. These live in the committed
 /// file `src/egl_constants.rs`, which is generated once (out of band) by

@@ -170,9 +170,11 @@ fn main() -> Result<(), BoxError> {
             // This gives us image support:
             egui_extras::install_image_loaders(&cc.egui_ctx);
             cc.egui_ctx.set_zoom_factor(scale);
+
             Ok(Box::<PartyApp>::new(PartyApp::new(
                 monitors.clone(),
                 handler_lite,
+                cc.clone()
             )))
         }
     )

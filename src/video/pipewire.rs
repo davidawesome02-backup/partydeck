@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::{Arc, Mutex, RwLock}, thread::JoinHandle};
+use std::{collections::HashMap, os::fd::IntoRawFd, sync::{Arc, Mutex, RwLock}, thread::JoinHandle};
 
 use pipewire::{self as pw, main_loop::MainLoopRc, context::ContextRc, core::CoreRc, stream::StreamRc};
 use pw::spa;
@@ -12,9 +12,9 @@ pub enum PipewireCommand {
     Terminate
 }
 pub struct PipewireInstance {
-    channel: pw::channel::Sender<PipewireCommand>,
-    thread: Option<JoinHandle<()>>,
-    streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<PipewireStream>>>>>,
+    pub channel: pw::channel::Sender<PipewireCommand>,
+    pub thread: Option<JoinHandle<()>>,
+    pub streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<PipewireStream>>>>>,
 }
 
 
@@ -52,6 +52,7 @@ fn pipewire_thread_inner(streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<Pipe
 
     let _attached = receiver.attach(mainloop.loop_(), move |cmd| match cmd {
         PipewireCommand::ConnectVid(id) => {
+            println!("Connecting to vid: {id}");
             let Ok(mut streams_map) = streams.write() else {
                 eprintln!("Error getting stream map lock.");
                 return;
@@ -212,6 +213,12 @@ impl PipewireStream {
                 if fd < 0 {
                     return;
                 }
+                // todo shouldnt be needed, remove again. no need to dup
+                let owned = match unsafe { dup_raw_fd(fd as std::os::fd::RawFd) } {
+                    Ok(f) => f,
+                    Err(_) => return,
+                };
+                
 
                 let chunk = data.chunk();
                 let offset = chunk.offset();
@@ -226,7 +233,7 @@ impl PipewireStream {
                 let size = write_pw_stream.spa_format_latest.size();
                 write_pw_stream.height = size.height;
                 write_pw_stream.width  = size.width;
-                write_pw_stream.dmabuf_latest = fd;
+                write_pw_stream.dmabuf_latest = owned.into_raw_fd() as i64;//fd;
                 write_pw_stream.stride = stride;
                 write_pw_stream.offset = offset;
 
@@ -353,4 +360,10 @@ fn build_buffers_param() -> Vec<u8> {
     });
 
     serialize_pod(&obj)
+}
+
+
+unsafe fn dup_raw_fd(fd: std::os::fd::RawFd) -> std::io::Result<std::os::fd::OwnedFd> {
+    let borrowed = std::os::fd::BorrowedFd::borrow_raw(fd);
+    borrowed.try_clone_to_owned()
 }
