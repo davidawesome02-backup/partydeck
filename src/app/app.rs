@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 
 use super::config::*;
-use crate::handler::*;
+use crate::{handler::*, video};
 use crate::input::*;
 use crate::instance::*;
 use crate::launch::*;
@@ -137,18 +137,18 @@ impl PartyApp {
     }
 }
 
-impl eframe::App for PartyApp {
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        if !raw_input.focused || self.task.is_some() {
-            return;
-        }
-        match self.cur_page {
-            MenuPage::Instances => self.handle_devices_instance_menu(),
-            _ => self.handle_gamepad_gui(raw_input),
-        }
-    }
+impl video::app_wrapper::App for PartyApp {
+    // fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+    //     if !raw_input.focused || self.task.is_some() {
+    //         return;
+    //     }
+    //     match self.cur_page {
+    //         MenuPage::Instances => self.handle_devices_instance_menu(),
+    //         _ => self.handle_gamepad_gui(raw_input),
+    //     }
+    // }
 
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui) {
         egui::TopBottomPanel::top("menu_nav_panel").show(ui.ctx(), |ui| {
             if self.task.is_some() {
                 ui.disable();

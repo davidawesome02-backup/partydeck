@@ -11,6 +11,8 @@ mod util;
 mod video;
 
 
+use std::error::Error;
+
 use crate::app::*;
 use crate::handler::Handler;
 use crate::monitor::{get_monitors_errorless, get_x11_dpi_scale};
@@ -18,9 +20,10 @@ use crate::paths::PATH_PARTY;
 use crate::profiles::remove_guest_profiles;
 use crate::util::*;
 
-use crate::video::pipewire::*;
+use crate::video::app_wrapper::BoxError;
+use crate::video::*;
 
-fn main() -> eframe::Result {
+fn main() -> Result<(), BoxError> {
     if std::env::args().any(|arg| arg == "--help") {
         println!("{}", USAGE_TEXT);
         std::process::exit(0);
@@ -163,10 +166,7 @@ fn main() -> eframe::Result {
 
     println!("[partydeck] Starting eframe app...");
 
-    eframe::run_native(
-        "PartyDeck",
-        options,
-        Box::new(|cc| {
+    app_wrapper::run("PartyDeck", move |cc: &app_wrapper::CreationContext| {
             // This gives us image support:
             egui_extras::install_image_loaders(&cc.egui_ctx);
             cc.egui_ctx.set_zoom_factor(scale);
@@ -174,8 +174,22 @@ fn main() -> eframe::Result {
                 monitors.clone(),
                 handler_lite,
             )))
-        }),
+        }
     )
+
+    // eframe::run_native(
+    //     "PartyDeck",
+    //     options,
+    //     Box::new(|cc| {
+    //         // This gives us image support:
+    //         egui_extras::install_image_loaders(&cc.egui_ctx);
+    //         cc.egui_ctx.set_zoom_factor(scale);
+    //         Ok(Box::<PartyApp>::new(PartyApp::new(
+    //             monitors.clone(),
+    //             handler_lite,
+    //         )))
+    //     }),
+    // )
 }
 
 static USAGE_TEXT: &str = r#"
