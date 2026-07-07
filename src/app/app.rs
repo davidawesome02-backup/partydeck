@@ -143,7 +143,7 @@ impl PartyApp {
         };
         
         if let Some(ref pipewire_context) = app.pipewire_context {
-            if let Ok(pipewire_temp) = PipewireVideo::new(&app.cc, 70, pipewire_context.channel.clone(), pipewire_context.streams.clone()) {
+            if let Ok(pipewire_temp) = PipewireVideo::new(&app.cc, 73, pipewire_context.channel.clone(), pipewire_context.streams.clone()) {
                 app.temp_window_open = Some((pipewire_temp, false));
             }
         }

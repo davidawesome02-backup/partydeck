@@ -39,6 +39,14 @@ glutin-winit = { version = "0.5", features = ["egl", "x11", "wayland"], default-
 khronos-egl = { version = "6", features = ["dynamic"] }
 pipewire = "0.10"
 
+
+# [patch.crates-io]
+# eframe = { path = "deps/egui/crates/eframe" }
+# egui = { path = "deps/egui/crates/egui" }
+# egui_glow = { path = "deps/egui/crates/egui_glow" }
+# egui-winit = { path = "deps/egui/crates/egui-winit" }
+
+
 [build-dependencies]
 reqwest = { version = "0.12.15", features = ["blocking", "json"], optional = true }
 serde_json = { version = "1.0.140", optional = true }

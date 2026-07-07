@@ -1,6 +1,6 @@
 use std::{collections::HashMap, os::fd::IntoRawFd, sync::{Arc, Mutex, RwLock}, thread::JoinHandle};
 
-use pipewire::{self as pw, main_loop::MainLoopRc, context::ContextRc, core::CoreRc, stream::StreamRc};
+use pipewire::{self as pw, context::ContextRc, core::CoreRc, main_loop::MainLoopRc, stream::{StreamListener, StreamRc}};
 use pw::spa;
 use spa::pod::Pod;
 
@@ -50,16 +50,25 @@ fn pipewire_thread_inner(streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<Pipe
 
     let loop_ref = mainloop.clone();
 
+    // Keep them alive!
+    let listener_hashmap: RwLock<HashMap<PipewireID, (StreamListener<Arc<RwLock<PipewireStream>>>, StreamRc)>> = RwLock::new(HashMap::new());
+
     let _attached = receiver.attach(mainloop.loop_(), move |cmd| match cmd {
         PipewireCommand::ConnectVid(id) => {
-            println!("Connecting to vid: {id}");
+            println!("Connecting to pipewire stream: {id}");
             let Ok(mut streams_map) = streams.write() else {
-                eprintln!("Error getting stream map lock.");
+                eprintln!("Connect: Pipewire response stream map poisoned!");
                 return;
             };
             match PipewireStream::new(id, loop_ref.clone(), context.clone(), core.clone()) {
                 Ok(new_pw_stream) => {
-                    streams_map.insert(id, new_pw_stream);
+                    let resulting_stream = new_pw_stream;
+                    streams_map.insert(id, resulting_stream.0);
+                    if let Ok(mut listener_map_write) = listener_hashmap.write() {
+                        listener_map_write.insert(id, resulting_stream.1);
+                    } else {
+                        eprintln!("Connect: Pipewire listener map poisoned!");
+                    }
                 },
                 Err(err_msg) => {
                     eprintln!("Error from pipewire connect: {err_msg}");
@@ -68,19 +77,35 @@ fn pipewire_thread_inner(streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<Pipe
             }
         }
         PipewireCommand::Disconnect(id) => {
+            let Ok(mut listen_hashmap_lock) = listener_hashmap.write() else {
+                eprintln!("Disconnect: Pipewire listener map poisoned!");
+                return;
+            };
+
+            if listen_hashmap_lock.remove(&id).is_none() {
+                eprintln!("No stream to disconenct listener ({id})"); 
+                return;
+            }
+            
             // Cant disconnect directly because storing the RC causes multi-thread issues,
             // Probably should just aquire a writer on main thread to write this, because we cant do true error handling here.
 
             let Ok(mut streams_map) = streams.write() else {
-                eprintln!("Error getting stream map lock.");
+                eprintln!("Disconnect: Pipewire response stream map poisoned!");
                 return;
             };
 
-            let Some(stream_to_remove) = streams_map.remove(&id) else {eprintln!("No stream to disconenct"); return};
+            let Some(stream_removed) = streams_map.remove(&id) else {
+                eprintln!("No stream to disconenct ({id})"); 
+                return;
+            };
 
-            let Ok(mut stream_to_remove_writer) = stream_to_remove.write() else {eprintln!("Failed to aquire writer to end stream"); return };
+            let Ok(mut stream_removed_writer) = stream_removed.write() else {
+                eprintln!("Failed to disconnect stream properly: {id}");
+                return;
+            };
 
-            stream_to_remove_writer.stop_requested = true;
+            stream_removed_writer.streaming = false;
         }
         PipewireCommand::Terminate => {
             loop_ref.quit();
@@ -96,7 +121,6 @@ fn pipewire_thread_inner(streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<Pipe
 pub struct PipewireStream {
     pub id: PipewireID,
     pub streaming: bool,
-    pub stop_requested: bool,
 
     pub dmabuf_latest: i64,
     pub height: u32,
@@ -113,7 +137,7 @@ impl PipewireStream {
         _mainloop: MainLoopRc,
         _context: ContextRc,
         core: CoreRc
-    ) -> Result<Arc<RwLock<PipewireStream>>, Box<dyn std::error::Error>> {
+    ) -> Result<(Arc<RwLock<PipewireStream>>, (StreamListener<Arc<RwLock<PipewireStream>>>, StreamRc)), Box<dyn std::error::Error>> {
         let stream = StreamRc::new(
             core,
             "gamescope-dmabuf-capture",
@@ -127,7 +151,6 @@ impl PipewireStream {
             PipewireStream { 
                 id,
                 streaming: false,
-                stop_requested: false,
 
                 dmabuf_latest: -1,
                 height: 0,
@@ -145,15 +168,12 @@ impl PipewireStream {
 
         let _listener = stream
             .add_local_listener_with_user_data(stream_metadata_clone)
-            .state_changed(move |stream, stream_metadata, _old, new| {
+            .state_changed(move |_stream, stream_metadata, _old, new| {
                 use pw::stream::StreamState;
                 
-
-                let mut write_pw_stream = stream_metadata.write().unwrap();
-                // let Ok(mut write_pw_stream) = stream_metadata.write() else {eprintln!("Failed to aquire stream write lock, pipewire dead."); return;};
+                // TODO handle better maybe? For now we just have to crash because we cant do much else if we poison
+                let mut write_pw_stream = stream_metadata.write().unwrap(); 
                 write_pw_stream.streaming = matches!(new, StreamState::Streaming);
-                
-                if write_pw_stream.stop_requested {let _ = stream.disconnect();}
             })
             .param_changed(move |stream: &pipewire::stream::Stream, stream_metadata, id, param| {
                 let Some(param) = param else { return };
@@ -185,7 +205,7 @@ impl PipewireStream {
                     let _ = stream.update_params(&mut params);
                 }
 
-                if write_pw_stream.stop_requested {let _ = stream.disconnect();}
+                
             })
             .process(|stream: &pipewire::stream::Stream, stream_metadata| {
                 // Drain to the newest available buffer; reassigning `newest` drops
@@ -214,10 +234,10 @@ impl PipewireStream {
                     return;
                 }
                 // todo shouldnt be needed, remove again. no need to dup
-                let owned = match unsafe { dup_raw_fd(fd as std::os::fd::RawFd) } {
-                    Ok(f) => f,
-                    Err(_) => return,
-                };
+                // let owned = match unsafe { dup_raw_fd(fd as std::os::fd::RawFd) } {
+                //     Ok(f) => f,
+                //     Err(_) => return,
+                // };
                 
 
                 let chunk = data.chunk();
@@ -233,29 +253,27 @@ impl PipewireStream {
                 let size = write_pw_stream.spa_format_latest.size();
                 write_pw_stream.height = size.height;
                 write_pw_stream.width  = size.width;
-                write_pw_stream.dmabuf_latest = owned.into_raw_fd() as i64;//fd;
+                write_pw_stream.dmabuf_latest = fd;
                 write_pw_stream.stride = stride;
                 write_pw_stream.offset = offset;
-
-                if write_pw_stream.stop_requested {let _ = stream.disconnect();}
             })
             .register()?;
 
 
         let values = build_enum_format();
         let Some(pod) = Pod::from_bytes(&values) else {
-            return Err("egui-pw-dmabuf: failed to build EnumFormat pod".into());
+            return Err("Failed to build EnumFormat pod".into());
         };
 
         let mut params = [pod];
         stream.connect(
             spa::utils::Direction::Input,
-            Some(id),
+            None,//Some(id),
             pw::stream::StreamFlags::AUTOCONNECT,
             &mut params,
         )?;
 
-        Ok(new_stream_metadata)
+        Ok((new_stream_metadata, (_listener, stream)))
     }
 }
 
@@ -360,10 +378,4 @@ fn build_buffers_param() -> Vec<u8> {
     });
 
     serialize_pod(&obj)
-}
-
-
-unsafe fn dup_raw_fd(fd: std::os::fd::RawFd) -> std::io::Result<std::os::fd::OwnedFd> {
-    let borrowed = std::os::fd::BorrowedFd::borrow_raw(fd);
-    borrowed.try_clone_to_owned()
 }

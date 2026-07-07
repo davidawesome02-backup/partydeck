@@ -404,32 +404,42 @@ impl PipewireVideo {
     pub fn ui(&mut self, ui: &mut egui::Ui, desired_size: egui::Vec2) -> egui::Response {
         let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
 
-        if ui.is_rect_visible(rect) {
+        if !ui.is_rect_visible(rect) { return response; }
 
-            if let Some(pipewire_stream) = self.streams.read().ok().and_then(|streams_lock| {streams_lock.get(&self.pw_id).cloned()}) {
+        let Some(pipewire_stream) = self.streams.read().ok().and_then(|streams_lock| {streams_lock.get(&self.pw_id).cloned()}) else {
+            // Disconnected UI - WE SHOULD NEVER GET HERE
+            return response;
+        };
 
-                // TODO maybe add pipewire disconnected UI check in here becasue we have not inspected the inside of pipewire_stream yet so we dont have to lock it.
+        // TODO maybe add pipewire disconnected UI check in here becasue we have not inspected the inside of pipewire_stream yet so we dont have to lock it.
+        { // I dont want to manualy drop, so just block scope this.
+            // Hate locking here because its a bit of a waste, but we have to to show the UI not inside GL.
+            let Ok(pipewire_stream) = pipewire_stream.read() else {
+                // Disconnected UI, or crash because lock poisoned
+                return response;
+            };
 
-                let renderer = self.renderer.clone();
-                let callback = egui_glow::CallbackFn::new(move |info, painter| {
-                    let Ok(mut r) = renderer.lock() else {return;};
-                    
-                    let Ok(pipewire_stream) = pipewire_stream.read() else {return;};
-
-                    let gl: &glow::Context = painter.gl();
-                    r.paint(gl, &info, rect, pipewire_stream);
-                
-                });
-
-                ui.painter().add(egui::PaintCallback {
-                    rect,
-                    callback: Arc::new(callback),
-                });
-            } else {
-                // disconnected ui.
+            if !pipewire_stream.streaming {
+                return response;
             }
+
         }
 
+        let renderer = self.renderer.clone();
+        let callback = egui_glow::CallbackFn::new(move |info, painter| {
+            let Ok(mut r) = renderer.lock() else {return;};
+            
+            let Ok(pipewire_stream) = pipewire_stream.read() else {return;};
+
+            let gl: &glow::Context = painter.gl();
+            r.paint(gl, &info, rect, pipewire_stream);
+        });
+
+        ui.painter().add(egui::PaintCallback {
+            rect,
+            callback: Arc::new(callback),
+        });
+        
         response
     }
 
