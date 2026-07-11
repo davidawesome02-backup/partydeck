@@ -16,7 +16,7 @@ use crate::profiles::*;
 use crate::util::*;
 
 use eframe::egui::{self, Key, Ui, ViewportId};
-use crate::video::EglApi;
+use crate::video::egl::EglApi;
 
 #[derive(Eq, PartialEq)]
 pub enum MenuPage {

@@ -10,16 +10,13 @@ mod profiles;
 mod util;
 mod video;
 
-
-use std::error::Error;
-
 use crate::app::*;
 use crate::handler::Handler;
 use crate::monitor::{get_monitors_errorless, get_x11_dpi_scale};
 use crate::paths::PATH_PARTY;
 use crate::profiles::remove_guest_profiles;
 use crate::util::*;
-use crate::video::EglApi;
+use crate::video::egl::EglApi;
 
 fn main() -> Result<(), eframe::Error> {
     if std::env::args().any(|arg| arg == "--help") {
