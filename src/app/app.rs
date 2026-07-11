@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 
 use super::config::*;
@@ -67,11 +67,9 @@ pub struct PartyApp {
 
     pub pipewire_context: Option<PipewireInstance>,
 
-    pub temp_window_open: Option<(PipewireVideo, bool)>,
+    pub temp_window_open: Option<Arc<Mutex<(PipewireVideo, bool, VecDeque<f32>)>>>,
     /// Shared EGL API — constructed once from the GL context and shared with all video players.
     egl: std::sync::Arc<EglApi>,
-
-    frame_times: VecDeque<f32>,
 
     // pub current_editing_instance: Option<(LaunchDisplay)>, // Not sure if this should be a LaunchDisplay or a index into existing or what...
 }
@@ -144,7 +142,6 @@ impl PartyApp {
             pipewire_context,
             temp_window_open: None,
             egl: egl.clone(),
-            frame_times: VecDeque::new(),
         };
         
         if let Some(ref pipewire_context) = app.pipewire_context {
@@ -155,7 +152,7 @@ impl PartyApp {
                 pipewire_context.channel.clone(),
                 pipewire_context.streams.clone(),
             ) {
-                app.temp_window_open = Some((pipewire_temp, false));
+                app.temp_window_open = Some(Arc::new(Mutex::new((pipewire_temp, false, VecDeque::new()))));
             }
         }
 
@@ -182,8 +179,8 @@ impl eframe::App for PartyApp {
     // }
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
-        if let Some(temp_window_open) = &mut self.temp_window_open {
-            if temp_window_open.1 {
+        if let Some(temp_window_open) = &self.temp_window_open {
+            if temp_window_open.lock().expect("BB").1 {
                 let ctx = ui.ctx().clone();
                 let viewport_id = ViewportId::from_hash_of("pipewire-video-window");
                 let builder = egui::ViewportBuilder::default()
@@ -192,15 +189,19 @@ impl eframe::App for PartyApp {
 
                 // Request fullscreen (optional)
                 let builder = builder.with_monitor(0).with_fullscreen(true);
-                ctx.show_viewport_immediate(viewport_id, builder, |ui, _class| {
+
+                let temp_window_open_new = temp_window_open.clone();
+                ctx.show_viewport_deferred(viewport_id, builder, move |ui, _class| {
                     
+                    let mut temp_window_open_new_locked = temp_window_open_new.lock().expect("C");
+
                     // ui.input(|test: &egui::InputState| {
                     //     test.viewport().events.
                     // })
 
                     // Honor the native window's close button.
                     if ui.input(|i| i.viewport().close_requested()) {
-                        temp_window_open.1 = false;
+                        temp_window_open_new_locked.1 = false;
                         // self.video.stop();
                         return;
                     }
@@ -208,16 +209,16 @@ impl eframe::App for PartyApp {
                     // Ordinary egui widgets coexist with the video in this window.
                     ui.horizontal(|ui| {
 
-                        let dt = ctx.input(|i| i.unstable_dt);
+                        let dt = ui.ctx().input(|i| i.unstable_dt);
         
-                        self.frame_times.push_back(dt);
-                        if self.frame_times.len() > 25 {
-                            self.frame_times.pop_front();
+                        temp_window_open_new_locked.2.push_back(dt);
+                        if temp_window_open_new_locked.2.len() > 25 {
+                            temp_window_open_new_locked.2.pop_front();
                         }
 
                         // Calculate average frame time
-                        let sum: f32 = self.frame_times.iter().sum();
-                        let avg_dt = sum / self.frame_times.len() as f32;
+                        let sum: f32 = temp_window_open_new_locked.2.iter().sum();
+                        let avg_dt = sum / temp_window_open_new_locked.2.len() as f32;
 
                         let fps = if avg_dt > 0.0 { 1.0 / avg_dt } else { 0.0 };
 
@@ -263,7 +264,7 @@ impl eframe::App for PartyApp {
                     //     _ => avail,
                     // };
                     ui.vertical_centered(|ui| {
-                        temp_window_open.0.ui(ui, size);
+                        temp_window_open_new_locked.0.ui(ui, size);
                     });
                 });
             }

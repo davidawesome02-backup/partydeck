@@ -68,7 +68,8 @@ impl PartyApp {
 
             if ui.button("test").clicked() {
                 if let Some(temp_window_open) = &mut self.temp_window_open {
-                    temp_window_open.1 = !temp_window_open.1;
+                    let mut temp_window_open_ref = temp_window_open.lock().expect("D");
+                    temp_window_open_ref.1 = !temp_window_open_ref.1;
                 }
             }
 
