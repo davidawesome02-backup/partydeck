@@ -20,10 +20,10 @@ use crate::paths::PATH_PARTY;
 use crate::profiles::remove_guest_profiles;
 use crate::util::*;
 
-use crate::video::app_wrapper::BoxError;
-use crate::video::*;
+// use crate::video::app_wrapper::BoxError;
+// use crate::video::*;
 
-fn main() -> Result<(), BoxError> {
+fn main() -> Result<(), eframe::Error> {
     if std::env::args().any(|arg| arg == "--help") {
         println!("{}", USAGE_TEXT);
         std::process::exit(0);
@@ -166,32 +166,35 @@ fn main() -> Result<(), BoxError> {
 
     println!("[partydeck] Starting eframe app...");
 
-    app_wrapper::run("PartyDeck", move |cc: &app_wrapper::CreationContext| {
-            // This gives us image support:
-            egui_extras::install_image_loaders(&cc.egui_ctx);
-            cc.egui_ctx.set_zoom_factor(scale);
-
-            Ok(Box::<PartyApp>::new(PartyApp::new(
-                monitors.clone(),
-                handler_lite,
-                cc.clone()
-            )))
-        }
-    )
-
-    // eframe::run_native(
-    //     "PartyDeck",
-    //     options,
-    //     Box::new(|cc| {
+    // app_wrapper::run("PartyDeck", move |cc: &app_wrapper::CreationContext| {
     //         // This gives us image support:
     //         egui_extras::install_image_loaders(&cc.egui_ctx);
     //         cc.egui_ctx.set_zoom_factor(scale);
+
     //         Ok(Box::<PartyApp>::new(PartyApp::new(
     //             monitors.clone(),
     //             handler_lite,
+    //             cc.clone()
     //         )))
-    //     }),
+    //     }
     // )
+
+    eframe::run_native(
+        "PartyDeck",
+        options,
+        Box::new(|cc: &eframe::CreationContext<'_>| {
+            egui_extras::install_image_loaders(&cc.egui_ctx);
+            cc.egui_ctx.set_zoom_factor(scale);
+
+            cc.gl.expect("").
+            
+            Ok(Box::<PartyApp>::new(PartyApp::new(
+                monitors.clone(),
+                handler_lite,
+                (cc.gl.expect("GL context invalid"),cc.get_proc_address.expect("GL proc context invalid"))
+            )))
+        }),
+    )
 }
 
 static USAGE_TEXT: &str = r#"

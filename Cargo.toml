@@ -11,8 +11,8 @@ build_gamescope = []
 
 [dependencies]
 dialog = "0.3.0"
-eframe = { version = "0.34.3", features = ["x11", "wayland", "default_fonts", "glow"], default-features = false}
-egui_extras = { version = "0.34.3", features = ["file", "image"], default-features = false }
+eframe = { version = "0.35.0", features = ["x11", "wayland", "default_fonts", "glow"], default-features = false}
+egui_extras = { version = "0.35.0", features = ["file", "image"], default-features = false }
 evdev = "=0.13.0"
 fastrand = "2.3.0"
 image = { version = "0.25.8", features = ["jpeg", "png"], default-features = false }
@@ -33,18 +33,18 @@ wayland-client = "0.31.11"
 wayland-scanner = "0.31.7"
 wayland-backend = "0.3.11"
 
-egui-winit = { version = "0.34.3", features = ["x11", "wayland"], default-features = false }
+egui-winit = { version = "0.35.0", features = ["x11", "wayland"], default-features = false }
 glutin = "0.32"
 glutin-winit = { version = "0.5", features = ["egl", "x11", "wayland"], default-features = false}
 khronos-egl = { version = "6", features = ["dynamic"] }
 pipewire = "0.10"
 
 
-# [patch.crates-io]
-# eframe = { path = "deps/egui/crates/eframe" }
-# egui = { path = "deps/egui/crates/egui" }
-# egui_glow = { path = "deps/egui/crates/egui_glow" }
-# egui-winit = { path = "deps/egui/crates/egui-winit" }
+[patch.crates-io]
+eframe = { path = "deps/egui/crates/eframe" }
+egui = { path = "deps/egui/crates/egui" }
+egui_glow = { path = "deps/egui/crates/egui_glow" }
+egui-winit = { path = "deps/egui/crates/egui-winit" }
 
 
 [build-dependencies]

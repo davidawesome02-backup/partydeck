@@ -128,10 +128,10 @@ impl PartyApp {
         });
     }
 
-    pub fn display_panel_bottom(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::bottom("info_panel")
-            .exact_height(100.0)
-            .show(ctx, |ui| {
+    pub fn display_panel_bottom(&mut self, ui: &mut Ui) {
+        egui::containers::Panel::bottom("info_panel")
+            .exact_size(100.0)
+            .show(ui, |ui| {
                 if self.task.is_some() {
                     ui.disable();
                 }

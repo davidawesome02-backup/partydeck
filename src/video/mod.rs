@@ -1,6 +1,6 @@
 pub mod pipewire;
 pub mod video;
-pub mod app_wrapper;
+// pub mod app_wrapper;
 mod egl_constants;
 mod egl;
 

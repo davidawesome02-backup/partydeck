@@ -11,6 +11,12 @@
 //! we avoid the EGL 1.5 core `eglCreateImage` (which needs `EGLAttrib` and an
 //! EGL 1.5 context) and stay compatible with EGL 1.4 drivers.
 
+
+// TODO david, make a new object here that translates eframe::CreationContext to egl_context, so its getproc macro can be ran to get
+// the offsets required. We should just store the functions at the start prob and just add the helper functions arround those alr loaded
+// to avoid complication. This way we also remove the extra unneeded crate.
+
+
 use std::ffi::c_void;
 use std::fmt;
 use std::sync::RwLockReadGuard;
@@ -252,5 +258,5 @@ unsafe fn load_proc<F: Copy>(
         std::mem::size_of::<extern "system" fn()>(),
         "fn-pointer size mismatch while loading {name}"
     );
-    Ok(std::mem::transmute_copy::<extern "system" fn(), F>(&raw))
+    Ok(unsafe { std::mem::transmute_copy::<extern "system" fn(), F>(&raw) })
 }

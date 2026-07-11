@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 
 use super::config::*;
-use crate::video::app_wrapper::CreationContext;
+// use crate::video::app_wrapper::CreationContext;
 use crate::video::pipewire::PipewireInstance;
 use crate::video::video::PipewireVideo;
 use crate::{handler::*, video};
@@ -15,6 +15,7 @@ use crate::monitor::Monitor;
 use crate::profiles::*;
 use crate::util::*;
 
+use eframe::CreationContext;
 use eframe::egui::{self, Key, Ui, ViewportId};
 use zbus::zvariant::Optional;
 
@@ -64,7 +65,6 @@ pub struct PartyApp {
     #[allow(dead_code)]
     pub task: Option<std::thread::JoinHandle<()>>,
 
-    pub cc: CreationContext,
     pub pipewire_context: Option<PipewireInstance>,
 
     pub temp_window_open: Option<(PipewireVideo, bool)>
@@ -79,7 +79,7 @@ macro_rules! cur_handler {
 }
 
 impl PartyApp {
-    pub fn new(monitors: Vec<Monitor>, handler_lite: Option<Handler>, cc: CreationContext) -> Self {
+    pub fn new(monitors: Vec<Monitor>, handler_lite: Option<Handler>) -> Self {
         let options = load_cfg();
         let input_devices = scan_input_devices(&options.pad_filter_type);
         let handlers = match handler_lite {
@@ -137,12 +137,12 @@ impl PartyApp {
             ],
             launch_display_idx: 0,
             model_temp_modify_profile: None,
-            cc: cc.clone(),
             pipewire_context,
             temp_window_open: None
         };
         
         if let Some(ref pipewire_context) = app.pipewire_context {
+            // pass required values to new pipewire video thread.
             if let Ok(pipewire_temp) = PipewireVideo::new(&app.cc, 73, pipewire_context.channel.clone(), pipewire_context.streams.clone()) {
                 app.temp_window_open = Some((pipewire_temp, false));
             }
@@ -159,7 +159,7 @@ impl PartyApp {
     }
 }
 
-impl video::app_wrapper::App for PartyApp {
+impl eframe::App for PartyApp {
     // fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
     //     if !raw_input.focused || self.task.is_some() {
     //         return;
@@ -170,7 +170,7 @@ impl video::app_wrapper::App for PartyApp {
     //     }
     // }
 
-    fn ui(&mut self, ui: &mut Ui) {
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         if let Some(temp_window_open) = &mut self.temp_window_open {
             if temp_window_open.1 {
                 let ctx = ui.ctx().clone();
@@ -249,7 +249,7 @@ impl video::app_wrapper::App for PartyApp {
         }
 
 
-        egui::TopBottomPanel::top("menu_nav_panel").show(ui.ctx(), |ui| {
+        egui::containers::Panel::top("menu_nav_panel").show(ui, |ui| {
             if self.task.is_some() {
                 ui.disable();
             }
@@ -257,10 +257,10 @@ impl video::app_wrapper::App for PartyApp {
         });
 
         if !self.is_lite() {
-            egui::SidePanel::left("games_panel")
+            egui::containers::Panel::left("games_panel")
                 .resizable(false)
-                .exact_width(200.0)
-                .show(ui.ctx(), |ui| {
+                .exact_size(200.0)
+                .show(ui, |ui| {
                     if self.task.is_some() {
                         ui.disable();
                     }
@@ -272,7 +272,7 @@ impl video::app_wrapper::App for PartyApp {
             egui::Panel::right("devices_panel")
                 .resizable(false)
                 .exact_size(180.0)
-                .show(ui.ctx(), |ui| {
+                .show(ui, |ui| {
                     if self.task.is_some() {
                         ui.disable();
                     }
@@ -282,10 +282,10 @@ impl video::app_wrapper::App for PartyApp {
         }
 
         if (self.cur_page != MenuPage::Home) && (self.cur_page != MenuPage::Instances) {
-            self.display_panel_bottom(ui.ctx());
+            self.display_panel_bottom(ui);
         }
 
-        egui::CentralPanel::default().show(ui.ctx(), |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             if self.task.is_some() {
                 ui.disable();
             }

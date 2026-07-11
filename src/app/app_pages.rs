@@ -437,12 +437,12 @@ impl PartyApp {
         
       
 
-        egui::TopBottomPanel::bottom(ui.next_auto_id())
+        egui::containers::Panel::bottom(ui.next_auto_id())
             .resizable(false)
-            .exact_height(160.0)
+            .exact_size(160.0)
             .show_separator_line(false)
             .frame(egui::Frame::NONE)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.add_space(3.0); // Hack to make it actualy centered (calculated using the 6px separator line default height)
                 ui.separator();
                 
@@ -542,12 +542,12 @@ impl PartyApp {
             }
         );
 
-        egui::SidePanel::left(ui.next_auto_id())
+        egui::containers::Panel::left(ui.next_auto_id())
             .resizable(false)
             .show_separator_line(false)
-            .exact_width(35.0)
+            .exact_size(35.0)
             .frame(egui::Frame::NONE)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.centered_and_justified(|ui| {
                     ui.set_height(25.0);
                     ui.set_width(25.0);
@@ -557,13 +557,15 @@ impl PartyApp {
                     }
                 })
             });
-
-        egui::SidePanel::right(ui.next_auto_id())
+        
+        // egui::containers::Panel::right(id)
+        egui::containers::Panel::right(ui.next_auto_id())
             .resizable(false)
             .show_separator_line(false)
             .frame(egui::Frame::NONE)
-            .exact_width(35.0)
-            .show_inside(ui, |ui| {
+            .exact_size(35.0)
+            .show(ui, |ui| {
+
                 ui.centered_and_justified(|ui| {
                     ui.set_height(25.0);
                     ui.set_width(25.0);
