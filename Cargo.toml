@@ -36,7 +36,7 @@ wayland-backend = "0.3.11"
 egui-winit = { version = "0.35.0", features = ["x11", "wayland"], default-features = false }
 glutin = "0.32"
 glutin-winit = { version = "0.5", features = ["egl", "x11", "wayland"], default-features = false}
-khronos-egl = { version = "6", features = ["dynamic"] }
+
 pipewire = "0.10"
 
 

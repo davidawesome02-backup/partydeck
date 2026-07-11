@@ -1,12 +1,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::sleep;
 
 use super::config::*;
 // use crate::video::app_wrapper::CreationContext;
 use crate::video::pipewire::PipewireInstance;
 use crate::video::video::PipewireVideo;
-use crate::{handler::*, video};
+use crate::handler::*;
 use crate::input::*;
 use crate::instance::*;
 use crate::launch::*;
@@ -15,9 +15,8 @@ use crate::monitor::Monitor;
 use crate::profiles::*;
 use crate::util::*;
 
-use eframe::CreationContext;
 use eframe::egui::{self, Key, Ui, ViewportId};
-use zbus::zvariant::Optional;
+use crate::video::EglApi;
 
 #[derive(Eq, PartialEq)]
 pub enum MenuPage {
@@ -67,7 +66,9 @@ pub struct PartyApp {
 
     pub pipewire_context: Option<PipewireInstance>,
 
-    pub temp_window_open: Option<(PipewireVideo, bool)>
+    pub temp_window_open: Option<(PipewireVideo, bool)>,
+    /// Shared EGL API — constructed once from the GL context and shared with all video players.
+    egl: std::sync::Arc<EglApi>,
 
     // pub current_editing_instance: Option<(LaunchDisplay)>, // Not sure if this should be a LaunchDisplay or a index into existing or what...
 }
@@ -79,7 +80,7 @@ macro_rules! cur_handler {
 }
 
 impl PartyApp {
-    pub fn new(monitors: Vec<Monitor>, handler_lite: Option<Handler>) -> Self {
+    pub fn new(monitors: Vec<Monitor>, handler_lite: Option<Handler>, egl: std::sync::Arc<EglApi>) -> Self {
         let options = load_cfg();
         let input_devices = scan_input_devices(&options.pad_filter_type);
         let handlers = match handler_lite {
@@ -138,12 +139,18 @@ impl PartyApp {
             launch_display_idx: 0,
             model_temp_modify_profile: None,
             pipewire_context,
-            temp_window_open: None
+            temp_window_open: None,
+            egl: egl.clone(),
         };
         
         if let Some(ref pipewire_context) = app.pipewire_context {
             // pass required values to new pipewire video thread.
-            if let Ok(pipewire_temp) = PipewireVideo::new(&app.cc, 73, pipewire_context.channel.clone(), pipewire_context.streams.clone()) {
+            if let Ok(pipewire_temp) = PipewireVideo::new(
+                &app.egl,
+                73,
+                pipewire_context.channel.clone(),
+                pipewire_context.streams.clone(),
+            ) {
                 app.temp_window_open = Some((pipewire_temp, false));
             }
         }
@@ -179,16 +186,8 @@ impl eframe::App for PartyApp {
                     .with_title("gamescope stream (egui viewport)")
                     .with_inner_size([960.0, 600.0]);
 
-                
-                {
-                    let mut gl_state = self.cc.glstate.borrow_mut();
-                    if let Some(monitors) = gl_state.get_monitors() {
-                        gl_state.request_fullscreen(&viewport_id, Some(egui_winit::winit::window::Fullscreen::Borderless(Some(monitors[0].clone()))));
-                    }
-                    // We can use gl_state here, but cant call show_viewport with it still borrowed. We must drop before.
-                    drop(gl_state);
-                }
-
+                // Request fullscreen (optional)
+                let builder = builder.with_monitor(0).with_fullscreen(true);
                 ctx.show_viewport_immediate(viewport_id, builder, |ui, _class| {
                     
                     // ui.input(|test: &egui::InputState| {

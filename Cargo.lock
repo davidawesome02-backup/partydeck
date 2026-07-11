@@ -1999,16 +1999,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "khronos-egl"
-version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6aae1df220ece3c0ada96b8153459b67eebe9ae9212258bb0134ae60416fdf76"
-dependencies = [
- "libc",
- "libloading",
-]
-
-[[package]]
 name = "khronos_api"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2773,7 +2763,6 @@ dependencies = [
  "glutin",
  "glutin-winit",
  "image",
- "khronos-egl",
  "nix 0.30.1",
  "pathsearch",
  "pipewire",

@@ -1,55 +1,29 @@
 //! Minimal EGL layer for importing a single-plane DMA-BUF into a GL texture.
 //!
-//! We deliberately load EGL *dynamically* (`libEGL.so.1`) via `khronos-egl`'s
-//! `DynamicInstance`, as the project notes require. The DMA-BUF import itself
-//! goes through the `EGL_EXT_image_dma_buf_import` extension, whose entry points
-//! (`eglCreateImageKHR` / `eglDestroyImageKHR`) and the GL-side
-//! `glEGLImageTargetTexture2DOES` are resolved at runtime with
-//! `eglGetProcAddress` and called through hand-declared FFI signatures. Those
-//! KHR/OES variants take an `EGLint` (i32) attribute list, which is exactly the
-//! shape of the constants the build script derives from the system headers, so
-//! we avoid the EGL 1.5 core `eglCreateImage` (which needs `EGLAttrib` and an
-//! EGL 1.5 context) and stay compatible with EGL 1.4 drivers.
+//! One `EglApi` is constructed per GL context and shared (via `Arc`) among all
+//! video players. All function pointers are resolved through `get_proc_address`
+//! from eframe's `CreationContext` — no `dlopen` or EGL wrapper crate needed.
 
-
-// TODO david, make a new object here that translates eframe::CreationContext to egl_context, so its getproc macro can be ran to get
-// the offsets required. We should just store the functions at the start prob and just add the helper functions arround those alr loaded
-// to avoid complication. This way we also remove the extra unneeded crate.
-
-
-use std::ffi::c_void;
+use std::ffi::{c_void, CStr};
 use std::fmt;
-use std::sync::RwLockReadGuard;
-
-use khronos_egl as egl;
+use std::sync::{Arc, RwLockReadGuard};
 
 use crate::video::pipewire::PipewireStream;
 
-/// EGL enum values and the DRM protocol constants. These live in the committed
-/// file `src/egl_constants.rs`, which is generated once (out of band) by
-/// `tools/gen_egl_constants.c` compiling against the real system headers and
-/// printing the values. Nothing is generated, parsed, or guessed at build time;
-/// the Rust build just `include!`s the checked-in file. `DRM_FORMAT_XRGB8888`
-/// is the FourCC for gamescope's BGRx export (its in-memory byte order is
-/// B, G, R, x, matching PipeWire's `BGRx`), and `DRM_FORMAT_MOD_LINEAR` is the
-/// un-tiled layout gamescope mandates.
-///
-/// The modifier hi/lo attribute enums are only used by the optional
-/// explicit-modifier import path, so `dead_code` is allowed for the module.
+/// The proc-address resolver from eframe's `CreationContext`.
+pub type GetProcAddr = Arc<dyn Fn(&CStr) -> *const c_void + Send + Sync>;
+
+/// EGL enum values and the DRM protocol constants. Generated once by
+/// `tools/gen_egl_constants.c` from real system headers.
 #[allow(dead_code)]
 mod sys {
     include!("egl_constants.rs");
 }
 
+use eframe::glow;
 pub use sys::DRM_FORMAT_XRGB8888;
 
-// ---- runtime-resolved extension entry points -------------------------------
-//
-// All pointer parameters are spelled as `*mut c_void` and enums/ints as
-// `u32`/`i32`, which are exactly the underlying types of `khronos_egl`'s
-// `EGLDisplay`/`EGLContext`/`EGLImage`/`Enum`/`Int` aliases. Using the raw
-// types directly keeps these declarations independent of which aliases the
-// crate happens to re-export.
+// ---- FFI function-pointer types -------------------------------------------
 
 type PfnEglCreateImageKhr = unsafe extern "C" fn(
     dpy: *mut c_void,
@@ -59,38 +33,27 @@ type PfnEglCreateImageKhr = unsafe extern "C" fn(
     attrib_list: *const i32,
 ) -> *mut c_void;
 
-type PfnEglDestroyImageKhr =
-    unsafe extern "C" fn(dpy: *mut c_void, image: *mut c_void) -> u32;
+type PfnEglDestroyImageKhr = unsafe extern "C" fn(dpy: *mut c_void, image: *mut c_void) -> u32;
 
-type PfnGlEglImageTargetTexture2dOes =
-    unsafe extern "C" fn(target: u32, image: *mut c_void);
+type PfnGlEglImageTargetTexture2dOes = unsafe extern "C" fn(target: u32, image: *mut c_void);
 
-/// Errors that can occur while bringing up EGL or importing a buffer.
+/// Errors from EGL construction or DMA-BUF import.
 #[derive(Debug)]
 pub enum EglError {
-    /// `libEGL.so.1` could not be loaded, or a required core symbol was absent.
-    Load(String),
-    /// A required extension entry point was not advertised by the driver.
     MissingProc(&'static str),
-    /// No current `EGLDisplay` - `eglGetCurrentDisplay` returned none. This is
-    /// expected only if we are called without the GL context being current.
     NoCurrentDisplay,
-    /// `eglCreateImageKHR` failed. Carries the raw `eglGetError` code if known.
-    CreateImage(Option<egl::Int>),
+    CreateImage(Option<u32>),
 }
 
 impl fmt::Display for EglError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EglError::Load(e) => write!(f, "failed to load libEGL: {e}"),
-            EglError::MissingProc(p) => {
-                write!(f, "EGL/GL driver does not provide required entry point `{p}`")
-            }
+            EglError::MissingProc(p) => write!(f, "missing proc: {p}"),
             EglError::NoCurrentDisplay => {
-                write!(f, "no current EGLDisplay (is the GL context current?)")
+                write!(f, "no current EGLDisplay (GL context not current?)")
             }
             EglError::CreateImage(Some(code)) => {
-                write!(f, "eglCreateImageKHR failed (eglGetError = 0x{code:04x})")
+                write!(f, "eglCreateImageKHR failed (error 0x{code:04x})")
             }
             EglError::CreateImage(None) => write!(f, "eglCreateImageKHR failed"),
         }
@@ -99,9 +62,7 @@ impl fmt::Display for EglError {
 
 impl std::error::Error for EglError {}
 
-/// A live `EGLImageKHR`. Tied logically to the display it was created on; the
-/// caller is responsible for destroying it (via [`EglApi::destroy_image`])
-/// before dropping, and for not using it after the owning fd is gone.
+/// A live `EGLImageKHR`. Tied logically to the display it was created on.
 pub struct EglImage {
     raw: *mut c_void,
 }
@@ -113,73 +74,100 @@ impl EglImage {
     }
 }
 
-/// The loaded EGL instance plus the extension entry points we need.
+/// Shared EGL API for DMA-BUF import. Constructed once and shared via
+/// `Arc` among all video players.
+///
+/// All entry points are resolved through the `get_proc_address` callback from
+/// eframe's `CreationContext`, which covers both GL and EGL symbols.
 pub struct EglApi {
-    instance: egl::DynamicInstance<egl::EGL1_4>,
+    pub gl_ctx: std::sync::Arc<glow::Context>,
+    /// `eglGetCurrentDisplay`
+    egl_get_current_display: unsafe extern "C" fn() -> *mut c_void,
+    /// `eglGetError`
+    egl_get_error: unsafe extern "C" fn() -> u32,
+    /// `eglCreateImageKHR`
     create_image: PfnEglCreateImageKhr,
+    /// `eglDestroyImageKHR`
     destroy_image: PfnEglDestroyImageKhr,
+    /// `glEGLImageTargetTexture2DOES`
     image_target_texture_2d: PfnGlEglImageTargetTexture2dOes,
 }
 
-impl EglApi {
-    /// Load `libEGL.so.1` and resolve the dma-buf import entry points.
-    ///
-    /// Returns an error (rather than panicking) if EGL is unavailable or the
-    /// driver lacks `EGL_EXT_image_dma_buf_import` / the OES texture target -
-    /// this is what lets the widget constructor fail cleanly per the brief.
-    pub fn load() -> Result<Self, EglError> {
-        // SAFETY: `load_required` dlopen's the system EGL and reads its symbol
-        // table; it is unsafe only in the usual FFI sense. We immediately
-        // capture any failure as an error value.
-        let instance = unsafe { egl::DynamicInstance::<egl::EGL1_4>::load_required() }
-            .map_err(|e| EglError::Load(e.to_string()))?;
+/// Resolve a symbol via the GL display's `get_proc_address`.
+/// # Safety
+/// The returned pointer must be cast to the target function type.
+/// # Safety
+/// The returned pointer must be cast to the target function type.
+/// We use `transmute_copy` so the compiler doesn't try to verify size equality
+/// between `*const c_void` and the fn type (they're always the same size).
+unsafe fn resolve_fn<F>(get_proc_address: &GetProcAddr, name: &str) -> Option<F> {
+    let cs = std::ffi::CString::new(name).ok()?;
+    let ptr = get_proc_address(&cs);
+    if ptr.is_null() {
+        None
+    } else {
+        Some(std::mem::transmute_copy(&ptr))
+    }
+}
 
+impl EglApi {
+    /// Construct the EGL API from a `get_proc_address` callback.
+    ///
+    /// All functions are resolved through the callback — no `dlopen` or EGL
+    /// wrapper crate is used.
+    ///
+    /// # Errors
+    /// Returns `EglError::MissingProc` if a required function symbol is absent.
+    pub fn new(gl_ctx: std::sync::Arc<glow::Context>, get_proc_address: &GetProcAddr) -> Result<Self, EglError> {
+        let egl_get_current_display = unsafe {
+            resolve_fn(get_proc_address, "eglGetCurrentDisplay")
+                .ok_or_else(|| EglError::MissingProc("eglGetCurrentDisplay"))?
+        };
+        let egl_get_error = unsafe {
+            resolve_fn(get_proc_address, "eglGetError")
+                .ok_or_else(|| EglError::MissingProc("eglGetError"))?
+        };
         let create_image = unsafe {
-            load_proc::<PfnEglCreateImageKhr>(&instance, "eglCreateImageKHR")
-        }?;
+            resolve_fn(get_proc_address, "eglCreateImageKHR")
+                .ok_or_else(|| EglError::MissingProc("eglCreateImageKHR"))?
+        };
         let destroy_image = unsafe {
-            load_proc::<PfnEglDestroyImageKhr>(&instance, "eglDestroyImageKHR")
-        }?;
+            resolve_fn(get_proc_address, "eglDestroyImageKHR")
+                .ok_or_else(|| EglError::MissingProc("eglDestroyImageKHR"))?
+        };
         let image_target_texture_2d = unsafe {
-            load_proc::<PfnGlEglImageTargetTexture2dOes>(
-                &instance,
-                "glEGLImageTargetTexture2DOES",
-            )
-        }?;
+            resolve_fn(get_proc_address, "glEGLImageTargetTexture2DOES")
+                .ok_or_else(|| EglError::MissingProc("glEGLImageTargetTexture2DOES"))?
+        };
 
         Ok(EglApi {
-            instance,
+            gl_ctx: gl_ctx.clone(),
+            egl_get_current_display,
+            egl_get_error,
             create_image,
             destroy_image,
             image_target_texture_2d,
         })
     }
 
-    /// The `EGLDisplay` current on this thread. Must be called with the GL
-    /// context current (i.e. from inside the egui paint callback).
-    pub fn current_display(&self) -> Result<egl::Display, EglError> {
-        self.instance
-            .get_current_display()
-            .ok_or(EglError::NoCurrentDisplay)
+    /// The `EGLDisplay` current on this thread.
+    /// Must be called with the GL context current (from inside an egui paint callback).
+    pub fn current_display(&self) -> Result<*mut c_void, EglError> {
+        let dpy = unsafe { (self.egl_get_current_display)() };
+        if dpy.is_null() {
+            Err(EglError::NoCurrentDisplay)
+        } else {
+            Ok(dpy)
+        }
     }
 
     /// Import a single-plane DMA-BUF as an `EGLImageKHR`.
-    ///
-    /// The descriptor's fd is borrowed only for the duration of this call;
-    /// EGL dup's the underlying dma_buf reference internally, so the resulting
-    /// image stays valid even after the fd is later closed.
     pub fn create_dmabuf_image(
         &self,
-        display: egl::Display,
+        display: *mut c_void,
         desc: &RwLockReadGuard<PipewireStream>,
     ) -> Result<EglImage, EglError> {
         use std::os::fd::AsRawFd as _;
-
-        // i32 (EGLint) attribute list - the KHR import variant. For a LINEAR
-        // buffer we intentionally omit the PLANE0_MODIFIER_{LO,HI} attributes:
-        // the base EGL_EXT_image_dma_buf_import path then assumes an implicit
-        // modifier, which is both correct for linear and more widely supported
-        // than requiring EGL_EXT_image_dma_buf_import_modifiers.
 
         let attribs: [i32; 13] = [
             sys::WIDTH,
@@ -197,32 +185,27 @@ impl EglApi {
             sys::NONE,
         ];
 
-        // SAFETY: `display` is a valid current display; ctx is EGL_NO_CONTEXT
-        // (null) and buffer is null, as mandated for the LINUX_DMA_BUF target.
-        // The attribute list is i32-typed and NONE-terminated.
+        // SAFETY: `display` is the current EGL display; ctx and buffer are null
+        // as mandated for the LINUX_DMA_BUF target.
         let raw = unsafe {
             (self.create_image)(
-                display.as_ptr(),
-                std::ptr::null_mut(), // EGL_NO_CONTEXT
+                display,
+                std::ptr::null_mut(),
                 sys::LINUX_DMA_BUF_EXT as u32,
-                std::ptr::null_mut(), // no client buffer
+                std::ptr::null_mut(),
                 attribs.as_ptr(),
             )
         };
 
         if raw.is_null() {
-            // EGL_NO_IMAGE_KHR == 0.
-            let code = self.instance.get_error().map(|e| e as egl::Int);
-            return Err(EglError::CreateImage(code));
+            let code = unsafe { (self.egl_get_error)() };
+            return Err(EglError::CreateImage(Some(code)));
         }
 
         Ok(EglImage { raw })
     }
 
-    /// Respecify the currently-bound texture (on `target`, e.g.
-    /// `glow::TEXTURE_2D`) so its storage aliases `image`. The texture must
-    /// already be bound on the active texture unit. The caller passes the GL
-    /// target constant so this module needs no GL binding of its own.
+    /// Bind `image` to the currently-bound texture on `target` (e.g. `glow::TEXTURE_2D`).
     ///
     /// # Safety
     /// A GL context must be current and a texture bound to `target`.
@@ -231,32 +214,7 @@ impl EglApi {
     }
 
     /// Destroy an image previously returned by [`Self::create_dmabuf_image`].
-    pub fn destroy_image(&self, display: egl::Display, image: EglImage) {
-        // SAFETY: `image.raw` came from eglCreateImageKHR on this display and
-        // is destroyed exactly once (it is consumed by value here).
-        unsafe {
-            let _ = (self.destroy_image)(display.as_ptr(), image.as_ptr());
-        }
+    pub fn destroy_image(&self, display: *mut c_void, image: EglImage) {
+        unsafe { let _ = (self.destroy_image)(display, image.as_ptr()); }
     }
-}
-
-/// Resolve an entry point via `eglGetProcAddress` and transmute it to `F`.
-///
-/// # Safety
-/// `F` must be a function-pointer type whose signature matches the real entry
-/// point's ABI. On Linux `extern "system"` and `extern "C"` are identical, so
-/// transmuting the returned pointer to an `extern "C"` fn type is sound.
-unsafe fn load_proc<F: Copy>(
-    instance: &egl::DynamicInstance<egl::EGL1_4>,
-    name: &'static str,
-) -> Result<F, EglError> {
-    let raw: extern "system" fn() = instance
-        .get_proc_address(name)
-        .ok_or(EglError::MissingProc(name))?;
-    debug_assert_eq!(
-        std::mem::size_of::<F>(),
-        std::mem::size_of::<extern "system" fn()>(),
-        "fn-pointer size mismatch while loading {name}"
-    );
-    Ok(unsafe { std::mem::transmute_copy::<extern "system" fn(), F>(&raw) })
 }

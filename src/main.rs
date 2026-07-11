@@ -19,9 +19,7 @@ use crate::monitor::{get_monitors_errorless, get_x11_dpi_scale};
 use crate::paths::PATH_PARTY;
 use crate::profiles::remove_guest_profiles;
 use crate::util::*;
-
-// use crate::video::app_wrapper::BoxError;
-// use crate::video::*;
+use crate::video::EglApi;
 
 fn main() -> Result<(), eframe::Error> {
     if std::env::args().any(|arg| arg == "--help") {
@@ -64,7 +62,6 @@ fn main() -> Result<(), eframe::Error> {
     }
 
     if std::env::args().any(|arg| arg == "--kwin") {
-        // We should depreciate this option as it will cause problems later, and its not really needed anymore
         let args: Vec<String> = std::env::args().filter(|arg| arg != "--kwin").collect();
 
         let (w, h) = (monitors[0].width(), monitors[0].height());
@@ -166,19 +163,6 @@ fn main() -> Result<(), eframe::Error> {
 
     println!("[partydeck] Starting eframe app...");
 
-    // app_wrapper::run("PartyDeck", move |cc: &app_wrapper::CreationContext| {
-    //         // This gives us image support:
-    //         egui_extras::install_image_loaders(&cc.egui_ctx);
-    //         cc.egui_ctx.set_zoom_factor(scale);
-
-    //         Ok(Box::<PartyApp>::new(PartyApp::new(
-    //             monitors.clone(),
-    //             handler_lite,
-    //             cc.clone()
-    //         )))
-    //     }
-    // )
-
     eframe::run_native(
         "PartyDeck",
         options,
@@ -186,12 +170,18 @@ fn main() -> Result<(), eframe::Error> {
             egui_extras::install_image_loaders(&cc.egui_ctx);
             cc.egui_ctx.set_zoom_factor(scale);
 
-            cc.gl.expect("").
-            
+            let gl = cc.gl.clone().expect("GL context invalid");
+            let get_proc_address = cc.get_proc_address.clone().expect("GL proc context invalid");
+
+            // Construct the shared EGL API from get_proc_address.
+            // All EGL symbols (core + extensions) are resolved through the
+            // same callback eframe itself uses to build its GL context.
+            let egl_api = std::sync::Arc::new(EglApi::new(gl, &get_proc_address).expect("Failed to initialize EGL"));
+
             Ok(Box::<PartyApp>::new(PartyApp::new(
                 monitors.clone(),
                 handler_lite,
-                (cc.gl.expect("GL context invalid"),cc.get_proc_address.expect("GL proc context invalid"))
+                egl_api,
             )))
         }),
     )
