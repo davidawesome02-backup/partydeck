@@ -155,6 +155,11 @@ fn main() -> Result<(), eframe::Error> {
                 eframe::icon_data::from_png_bytes(&include_bytes!("../res/icon.png")[..])
                     .expect("Failed to load icon"),
             ),
+        renderer: eframe::Renderer::Glow,
+        glow_options: eframe::egui_glow::GlowConfiguration {
+            vsync: false,
+            ..Default::default()
+        },
         ..Default::default()
     };
 

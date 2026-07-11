@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::sleep;
@@ -70,6 +71,8 @@ pub struct PartyApp {
     /// Shared EGL API — constructed once from the GL context and shared with all video players.
     egl: std::sync::Arc<EglApi>,
 
+    frame_times: VecDeque<f32>,
+
     // pub current_editing_instance: Option<(LaunchDisplay)>, // Not sure if this should be a LaunchDisplay or a index into existing or what...
 }
 
@@ -141,6 +144,7 @@ impl PartyApp {
             pipewire_context,
             temp_window_open: None,
             egl: egl.clone(),
+            frame_times: VecDeque::new(),
         };
         
         if let Some(ref pipewire_context) = app.pipewire_context {
@@ -203,7 +207,25 @@ impl eframe::App for PartyApp {
 
                     // Ordinary egui widgets coexist with the video in this window.
                     ui.horizontal(|ui| {
+
+                        let dt = ctx.input(|i| i.unstable_dt);
+        
+                        self.frame_times.push_back(dt);
+                        if self.frame_times.len() > 25 {
+                            self.frame_times.pop_front();
+                        }
+
+                        // Calculate average frame time
+                        let sum: f32 = self.frame_times.iter().sum();
+                        let avg_dt = sum / self.frame_times.len() as f32;
+
+                        let fps = if avg_dt > 0.0 { 1.0 / avg_dt } else { 0.0 };
+
+                        // Display the counter
+                        ui.label(format!("FPS: {:.1}", fps));
+
                         ui.strong("Live stream");
+                        ui.request_repaint();
                         // let (color, text) = if self.video.connected() {
                         //     (egui::Color32::from_rgb(0x3c, 0xb3, 0x71), "connected")
                         // } else {
