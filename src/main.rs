@@ -1,11 +1,12 @@
 mod app;
 mod handler;
 mod input;
-mod instance;
 mod launch;
+mod layout;
 mod monitor;
 mod paths;
 mod profiles;
+mod session;
 mod util;
 
 use crate::app::*;
@@ -107,6 +108,7 @@ fn main() -> eframe::Result {
             Ok(Box::<PartyApp>::new(PartyApp::new(
                 monitors.clone(),
                 handler_lite,
+                fullscreen,
             )))
         }),
     )

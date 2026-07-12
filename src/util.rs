@@ -1,6 +1,7 @@
 use crate::paths::{PATH_HOME, PATH_PARTY};
 
 use dialog::{Choice, DialogBox};
+use eframe::egui::Color32;
 use rfd::FileDialog;
 use std::error::Error;
 use std::fs::{self, File};
@@ -118,9 +119,8 @@ pub fn zip_dir(src_dir: &PathBuf, dest: &PathBuf) -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
-pub fn get_installed_steamapps() -> Vec<Option<steamlocate::App>> {
+pub fn get_installed_steamapps() -> Vec<steamlocate::App> {
     let mut games = Vec::new();
-    games.push(None);
 
     if let Ok(steam_dir) = steamlocate::SteamDir::locate()
         && let Ok(libraries) = steam_dir.libraries()
@@ -133,11 +133,13 @@ pub fn get_installed_steamapps() -> Vec<Option<steamlocate::App>> {
 
             for app in library.apps() {
                 if let Ok(app) = app {
-                    games.push(Some(app));
+                    games.push(app);
                 }
             }
         }
     }
+
+    games.sort_by(|a, b| a.install_dir.to_lowercase().cmp(&b.install_dir.to_lowercase()));
 
     return games;
 }
@@ -291,4 +293,36 @@ impl OsFmt for PathBuf {
             format!("Z:{}", path_fmt)
         }
     }
+}
+
+
+pub fn next_instance_color(used: &[Color32]) -> Color32 {
+    // HSV to RGB, converted from the legendary stackoverflow/a/54024653;
+    // saturation and value fixed at 0.8.
+    let random_color = || {
+        let (h, s, v) = (fastrand::f64() * 360.0, 0.8, 0.8);
+        let f = |n: f64| {
+            let k = (n + h / 60.0) % 6.0;
+            ((v - v * s * k.min(4.0 - k).clamp(0.0, 1.0)) * 255.0) as u8
+        };
+        Color32::from_rgb(f(5.0), f(3.0), f(1.0))
+    };
+
+    let distance = |c1: Color32, c2: Color32| {
+        (c1.r() as f32 - c2.r() as f32).powi(2) * 0.299
+            + (c1.g() as f32 - c2.g() as f32).powi(2) * 0.587
+            + (c1.b() as f32 - c2.b() as f32).powi(2) * 0.114
+    };
+    (0..10)
+        .map(|_| random_color())
+        .map(|test_color| {
+            let nearest = used
+                .iter()
+                .map(|&color| distance(color, test_color))
+                .fold(f32::INFINITY, f32::min);
+            (nearest, test_color)
+        })
+        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+        .unwrap()
+        .1
 }

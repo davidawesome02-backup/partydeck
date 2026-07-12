@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::error::Error;
 use std::path::PathBuf;
 
@@ -122,3 +123,17 @@ pub static GUEST_NAMES: [&str; 33] = [
     "Lich", "Smores", "Canary", "Trico", "Yorda", "Wander", "Agro", "Jak", "Daxter", "Soap",
     "Ghost", "Tomi", "Masaki",
 ];
+
+pub fn next_temp_name(used: &HashSet<String>) -> String {
+    let candidates = GUEST_NAMES
+        .iter()
+        .map(|guest_name| format!(".{guest_name}"))
+        .filter(|profile| !used.contains(profile))
+        .collect::<Vec<_>>();
+
+    if candidates.is_empty() {
+        format!(".Auto profile - {}", fastrand::u32(10000..99999))
+    } else {
+        candidates[fastrand::usize(..candidates.len())].clone()
+    }
+}

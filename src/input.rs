@@ -1,3 +1,5 @@
+use std::hash::{Hash, Hasher};
+
 use crate::app::PadFilterType;
 
 use evdev::*;
@@ -35,7 +37,10 @@ pub struct DeviceInfo {
     pub path: String,
     pub enabled: bool,
     pub device_type: DeviceType,
+    pub hash: DeviceHash,
 }
+
+pub type DeviceHash = u64;
 
 pub struct InputDevice {
     path: String,
@@ -45,10 +50,10 @@ pub struct InputDevice {
     has_button_held: bool,
 }
 impl InputDevice {
-    pub fn name(&self) -> &str {
+    fn name(&self) -> &str {
         self.dev.name().unwrap_or_else(|| "")
     }
-    pub fn emoji(&self) -> &str {
+    fn emoji(&self) -> &str {
         match self.device_type() {
             DeviceType::Gamepad => "🎮",
             DeviceType::Keyboard => "🖮",
@@ -56,7 +61,7 @@ impl InputDevice {
             DeviceType::Other => "",
         }
     }
-    pub fn fancyname(&self) -> &str {
+    fn fancyname(&self) -> &str {
         match self.dev.input_id().vendor() {
             0x045e => "Xbox Controller",
             0x054c => "PS Controller",
@@ -65,11 +70,28 @@ impl InputDevice {
             _ => self.name(),
         }
     }
-    pub fn path(&self) -> &str {
+    fn path(&self) -> &str {
         &self.path
+    }
+    pub fn label(&self) -> String {
+        format!(
+            "{} {} ({})",
+            self.emoji(),
+            self.fancyname(),
+            self.path.trim_start_matches("/dev/input/event")
+        )
     }
     pub fn enabled(&self) -> bool {
         self.enabled
+    }
+
+    pub fn hash(&self) -> DeviceHash {
+        let mut hasher = std::hash::DefaultHasher::new();
+        self.path.hash(&mut hasher);
+        self.dev.unique_name().hash(&mut hasher);
+        self.dev.input_id().hash(&mut hasher);
+        self.dev.name().hash(&mut hasher);
+        hasher.finish()
     }
     pub fn device_type(&self) -> DeviceType {
         self.device_type
@@ -82,6 +104,7 @@ impl InputDevice {
             path: self.path().to_string(),
             enabled: self.enabled(),
             device_type: self.device_type(),
+            hash: self.hash(),
         }
     }
     pub fn poll(&mut self) -> Option<PadButton> {
