@@ -22,7 +22,6 @@ use crate::video::pipewire::{PipewireCommand, PipewireID, PipewireStream};
 pub enum Error {
     Egl(EglError),
     Gl(String),
-    Thread(String),
 }
 
 impl std::fmt::Display for Error {
@@ -30,7 +29,6 @@ impl std::fmt::Display for Error {
         match self {
             Error::Egl(e) => write!(f, "EGL error: {e}"),
             Error::Gl(e) => write!(f, "GL error: {e}"),
-            Error::Thread(e) => write!(f, "Thread error: {e}"),
         }
     }
 }
@@ -179,9 +177,10 @@ impl Renderer {
             gl.bind_framebuffer(glow::READ_FRAMEBUFFER, restore);
         }
     }
+}
 
-    /// Destroy GL resources. Call from `on_exit` while GL is current.
-    fn destroy(&mut self, gl: &glow::Context) {
+impl Drop for Renderer {
+    fn drop(&mut self) {
         if let Some(img) = self.image.take() {
             if let Ok(display) = self.egl.current_display() {
                 self.egl.destroy_image(display, img);
@@ -189,15 +188,12 @@ impl Renderer {
         }
         self.fbo_complete = false;
         unsafe {
-            gl.delete_framebuffer(self.fbo);
-            gl.delete_texture(self.texture);
+            self.egl.gl_ctx.delete_framebuffer(self.fbo);
+            self.egl.gl_ctx.delete_texture(self.texture);
         }
     }
 }
 
-/// An egui widget that plays a gamescope DMA-BUF stream via PipeWire.
-///
-/// Construct one with [`PipewireVideo::new`] and draw with [`ui`](Self::ui).
 pub struct PipewireVideo {
     renderer: Arc<Mutex<Renderer>>,
     sender: pw::channel::Sender<PipewireCommand>,
@@ -206,10 +202,6 @@ pub struct PipewireVideo {
 }
 
 impl PipewireVideo {
-    /// Create a new video widget.
-    ///
-    /// `egl` is a shared `Arc<EglApi>` from `PartyApp` — constructed once from
-    /// the GL context and shared among all video players.
     pub fn new(
         egl: &Arc<EglApi>,
         target: PipewireID,
@@ -266,13 +258,6 @@ impl PipewireVideo {
         });
 
         response
-    }
-
-    /// Release GPU resources. Call from your [`App::on_exit`] while GL is current.
-    pub fn destroy_gl_resources(&self, gl: &glow::Context) {
-        if let Ok(mut r) = self.renderer.lock() {
-            r.destroy(gl);
-        }
     }
 }
 

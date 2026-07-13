@@ -67,7 +67,7 @@ pub struct PartyApp {
 
     pub pipewire_context: Option<PipewireInstance>,
 
-    pub temp_window_open: Option<Arc<Mutex<(PipewireVideo, bool, VecDeque<f32>)>>>,
+    pub temp_window_open: Option<Arc<Mutex<(GamescopeSession, bool, VecDeque<f32>)>>>,
     /// Shared EGL API — constructed once from the GL context and shared with all video players.
     egl: std::sync::Arc<EglApi>,
 
@@ -146,14 +146,13 @@ impl PartyApp {
         
         if let Some(ref pipewire_context) = app.pipewire_context {
             // pass required values to new pipewire video thread.
-            if let Ok(pipewire_temp) = PipewireVideo::new(
+            let gamescope_session = GamescopeSession::new(
                 &app.egl,
-                73,
                 pipewire_context.channel.clone(),
                 pipewire_context.streams.clone(),
-            ) {
-                app.temp_window_open = Some(Arc::new(Mutex::new((pipewire_temp, false, VecDeque::new()))));
-            }
+            ).unwrap();
+            app.temp_window_open = Some(Arc::new(Mutex::new((gamescope_session, false, VecDeque::new()))));
+            
         }
 
         if app.options.check_for_updates {
