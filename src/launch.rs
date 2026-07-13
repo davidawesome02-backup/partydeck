@@ -851,7 +851,7 @@ impl GamescopeWaylandState {
 
         input_interface.get_output_size();
         self.latest_output_size = None;
-        locked_event_queue.roundtrip(self).map_err(|e| format!("Failed to dropcess round trip: {e}"))?;
+        locked_event_queue.roundtrip(self).map_err(|e| format!("Failed to process round trip: {e}"))?;
 
         self.latest_output_size.ok_or("No output size returned?".to_owned())
     }
@@ -912,9 +912,9 @@ impl GamescopeSession {
         let xdg_runtime_dir = std::env::var("XDG_RUNTIME_DIR").map_err(|e| format!("XDG env var not set: {e}"))?; // Follow as I think gamescope does.
         let wayland_socket_path = std::path::PathBuf::from(xdg_runtime_dir).join(wayland_display);
 
-        let wayland_state = GamescopeWaylandState::new(wayland_socket_path)?;
+        let mut wayland_state = GamescopeWaylandState::new(wayland_socket_path)?;
         
-
+        println!("{:?}",wayland_state.get_size()?);
 
 
         let pw_target = wayland_state.pipewire_node.ok_or("Unable to get pipewire interface!")?;
