@@ -15,7 +15,7 @@ use crate::monitor::Monitor;
 use crate::paths::*;
 use crate::profiles::{create_profile, create_profile_gamesave};
 use crate::util::*;
-use eframe::egui;
+use eframe::egui::{self, Pos2, Rect, Vec2};
 use eframe::epaint::tessellator::path;
 use nix::libc::close;
 use nix::sys::signal::{Signal, kill};
@@ -732,13 +732,12 @@ use wayland_client::{Connection, Dispatch, Proxy};
 struct GamescopeWaylandState {
     pipewire_interface: Option<GamescopePipewire>,
     input_interface: Option<GamescopeInput>,
+    has_data_to_send: bool,
+
     pub pipewire_node: Option<u32>,
+    pub latest_output_size: Rect,
 
-    latest_output_size: Option<(u32, u32)>,
-    latest_mouse_potion: Option<(f64, f64)>,
-
-
-    // Warning, can hardlock if used in callback!
+    // Warning, can hardlock if used in callback! I dont like this arc, but I will need to figure out later.
     event_queue: Arc<Mutex<wayland_client::EventQueue<GamescopeWaylandState>>>,
 }
 
@@ -769,7 +768,6 @@ impl Dispatch<wl_registry::WlRegistry, ()> for GamescopeWaylandState {
     }
 }
 
-
 impl Dispatch<GamescopePipewire, ()> for GamescopeWaylandState {
     fn event(
         state: &mut Self,
@@ -795,14 +793,15 @@ impl Dispatch<GamescopeInput, ()> for GamescopeWaylandState {
         event: <GamescopeInput as wayland_client::Proxy>::Event,
         _: &(),
         _: &Connection,
-        qh: &wayland_client::QueueHandle<Self>,
+        _qh: &wayland_client::QueueHandle<Self>,
     ) {
         match event {
             gamescope_input::Event::MousePosition { x, y } => {
-                state.latest_mouse_potion = Some((x,y));
+                // state.latest_mouse_potion = Some((x,y));
             }
             gamescope_input::Event::OutputSize { width, height } => {
-                state.latest_output_size = Some((width, height));
+                // Lossy, maybe fix later, but who is using a near 32 bit int screen?
+                state.latest_output_size = Rect{ min: Pos2::ZERO, max: Pos2{x: width as f32, y: height as f32}};
             }
         }
     }
@@ -820,10 +819,10 @@ impl GamescopeWaylandState {
         let mut state = Self {
             input_interface: None,
             pipewire_interface: None,
-            pipewire_node: None,
+            has_data_to_send: false,
 
-            latest_output_size: None,
-            latest_mouse_potion: None,
+            pipewire_node: None,
+            latest_output_size: Rect::ZERO,
 
             event_queue: event_queue.clone(),
         };
@@ -844,16 +843,65 @@ impl GamescopeWaylandState {
         Ok(state)
     }
 
-    pub fn get_size(&mut self) -> Result<(u32, u32), String> {
+    pub fn get_size(&mut self) -> Result<(), String> {
         let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
+        input_interface.get_output_size();
+        self.has_data_to_send = true;
+        self.round_trip()?;
+        Ok(())
+    }
+
+    // pub fn send_key(&mut self) {
+    //     let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
+
+    // }
+
+    // pub fn mouse_button(&mut self, primary: bool, secondary: bool, tertiary: bool) {
+    //     let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
+    //     /* input-event-codes.h
+    //     #define BTN_LEFT		0x110
+    //     #define BTN_RIGHT		0x111
+    //     #define BTN_MIDDLE		0x112
+    //     */
+        
+    //     input_interface.mouse_button(0x110, primary as u32);
+    //     input_interface.mouse_button(0x111, secondary as u32);
+    //     input_interface.mouse_button(0x112, tertiary as u32);
+    // }
+
+    pub fn mouse_set(&mut self, pos: Vec2) -> Result<(), String> {
+        println!("Set mouse to {pos:?}");
+        let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
+        let translated_pos = self.latest_output_size.lerp_inside(pos);
+        input_interface.mouse_warp(translated_pos.x as i32, translated_pos.y as i32);
+        self.has_data_to_send = true;
+        Ok(())
+    }
+
+    pub fn mouse_move(&mut self, delta: Vec2) -> Result<(), String> {
+        if delta == Vec2::ZERO { return Ok(()); }
+
+        let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
+        let translated_delta = self.latest_output_size.lerp_inside(delta);
+        input_interface.mouse_motion(translated_delta.x as i32, translated_delta.y as i32);
+        println!("Test: {translated_delta:?}");
+
+        self.has_data_to_send = true;
+        Ok(())
+    }
+
+    // pub fn mouse_scroll(&mut self, x: i32, y: i32) {
+    //     let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
+    //     input_interface.mouse_scroll(x, y);
+    // }
+
+    pub fn round_trip(&mut self) -> Result<(), String> {
+        if self.has_data_to_send == false { return Ok(()); };
         let event_queue = self.event_queue.clone();
         let mut locked_event_queue = event_queue.lock().map_err(|e| format!("Failed to lock event_queue: {e}"))?;
-
-        input_interface.get_output_size();
-        self.latest_output_size = None;
         locked_event_queue.roundtrip(self).map_err(|e| format!("Failed to process round trip: {e}"))?;
-
-        self.latest_output_size.ok_or("No output size returned?".to_owned())
+        self.has_data_to_send = false;
+        Ok(())
     }
 }
 
@@ -873,9 +921,11 @@ impl Drop for ManagedChild {
 
 pub struct GamescopeSession {
     video_ui: PipewireVideo,
-    mouse_data: (bool, egui::PointerState), // Bool mouse inside area last frame, last frame pointer data.
     pub child_proc: ManagedChild,
-    pub wayland_state: GamescopeWaylandState
+    pub wayland_state: GamescopeWaylandState,
+
+    last_keys_down: HashSet<egui::Key>,
+    last_pointer_pos: Option<Vec2>
 }
 
 use nix::unistd::pipe;
@@ -891,6 +941,7 @@ impl GamescopeSession {
 
         let mut child_proc = ManagedChild(Command::new("gamescope")
             .args(["-R", &format!("/proc/self/fd/{}",write_fd.as_raw_fd().to_string())])
+            .args(["--composite-cursor", "--force-windows-fullscreen", "--nested-follow-window-scale", "1"])
             .args(["--", "glxgears"])
             .spawn()
             .map_err(|e| format!("Failed to create gamescope child: {e}"))?);
@@ -914,16 +965,18 @@ impl GamescopeSession {
 
         let mut wayland_state = GamescopeWaylandState::new(wayland_socket_path)?;
         
-        println!("{:?}",wayland_state.get_size()?);
+        // println!("{:?}",wayland_state.get_size()?);
 
 
         let pw_target = wayland_state.pipewire_node.ok_or("Unable to get pipewire interface!")?;
         
         Ok(Self {
             video_ui: PipewireVideo::new(egl, pw_target, sender, streams).map_err(|e| format!("Failed to create video: {e}"))?,
-            mouse_data: (true, egui::PointerState::default()),
             child_proc,
-            wayland_state
+            wayland_state,
+
+            last_keys_down: HashSet::new(),
+            last_pointer_pos: None
         })
     }
 
@@ -963,14 +1016,46 @@ impl GamescopeSession {
         return Ok(wl_display.to_string());
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, desired_size: egui::Vec2) -> egui::Response {
+    pub fn ui(&mut self, ui: &mut egui::Ui, desired_size: egui::Vec2) -> Result<egui::Response, String> {
         let response = self.video_ui.ui(ui, desired_size);
 
-        // let current_pointer_state: egui::PointerState = response.ctx.input(|i| i.pointer);
+        let current_pointer_state = response.ctx.input(|i| i.pointer.clone());
+        let current_keys_down = ui.input(|i| i.keys_down.clone());
 
-        // current_pointer_state.
+        let current_pointer_pos = 
+            current_pointer_state.latest_pos()
+            .filter(|pos| response.rect.contains(*pos))
+            .map(|pos|
+                (pos-response.rect.left_top())/(response.rect.right_bottom()-response.rect.left_top())
+            );
 
-        response
+        let current_pointer_movement = 
+            current_pointer_state.delta() / 
+            (response.rect.right_bottom()-response.rect.left_top());
+
+
+        // Update bounds of remote, shouldnt be needed every frame.
+        self.wayland_state.get_size()?;
+        
+        if self.last_pointer_pos.is_none() && let Some(pointer_pos) = current_pointer_pos {
+            // Force pos
+            self.wayland_state.mouse_set(pointer_pos)?;
+        }
+
+        if current_pointer_pos.is_none() && self.last_pointer_pos.is_some() {
+            
+        }
+
+        if current_pointer_pos.is_some() && self.last_pointer_pos.is_some() {
+            self.wayland_state.mouse_move(current_pointer_movement)?;
+        }
+
+        self.last_pointer_pos = current_pointer_pos;
+        self.wayland_state.round_trip()?; // Only runs if we actually updated anything.
+
+        // current_pointer_state.button_clicked(button)
+
+        Ok(response)
     }
 }
 

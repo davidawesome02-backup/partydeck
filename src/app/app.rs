@@ -187,7 +187,7 @@ impl eframe::App for PartyApp {
                     .with_inner_size([960.0, 600.0]);
 
                 // Request fullscreen (optional)
-                let builder = builder.with_monitor(0).with_fullscreen(true);
+                // let builder = builder.with_monitor(0).with_fullscreen(true);
 
                 let temp_window_open_new = temp_window_open.clone();
                 ctx.show_viewport_deferred(viewport_id, builder, move |ui, _class| {
@@ -263,7 +263,7 @@ impl eframe::App for PartyApp {
                     //     _ => avail,
                     // };
                     ui.vertical_centered(|ui| {
-                        temp_window_open_new_locked.0.ui(ui, size);
+                        temp_window_open_new_locked.0.ui(ui, size).unwrap();
                     });
                 });
             }
