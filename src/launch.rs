@@ -690,27 +690,77 @@ pub fn fuse_overlayfs_mount_gamedirs(
 
 
 
+mod gamescope_pipewire_wrapper {
+    use wayland_client;
+    use wayland_client::protocol::*;
+
+    pub mod __interfaces {
+        wayland_scanner::generate_interfaces!(
+            "./src/gamescope-pipewire.xml"
+        );
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_client_code!(
+        "./src/gamescope-pipewire.xml"
+    );
+}
+use gamescope_pipewire_wrapper::gamescope_pipewire::{GamescopePipewire, self};
+
+mod gamescope_input_wrapper {
+    use wayland_client;
+    use wayland_client::protocol::*;
+
+    pub mod __interfaces {
+        wayland_scanner::generate_interfaces!(
+            "./src/gamescope-input.xml"
+        );
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_client_code!(
+        "./src/gamescope-input.xml"
+    );
+}
+use gamescope_input_wrapper::gamescope_input::{GamescopeInput, self};
+
+
+
 use wayland_client::protocol::wl_registry;
-use wayland_client::{Connection, Dispatch, EventQueue};
+use wayland_client::{Connection, Dispatch, Proxy};
 
 struct GamescopeWaylandState {
-    compositor_found: bool,
+    pipewire_interface: Option<GamescopePipewire>,
+    input_interface: Option<GamescopeInput>,
+    pub pipewire_node: Option<u32>,
+
+    latest_output_size: Option<(u32, u32)>,
+    latest_mouse_potion: Option<(f64, f64)>,
+
+
+    // Warning, can hardlock if used in callback!
+    event_queue: Arc<Mutex<wayland_client::EventQueue<GamescopeWaylandState>>>,
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for GamescopeWaylandState {
     fn event(
         state: &mut GamescopeWaylandState,
-        _proxy: &wl_registry::WlRegistry,
+        registry: &wl_registry::WlRegistry,
         event: wl_registry::Event,
         _data: &(),
         _conn: &Connection,
-        _qhandle: &wayland_client::QueueHandle<GamescopeWaylandState>,
+        qh: &wayland_client::QueueHandle<Self>,
     ) {
         match event {
-            wl_registry::Event::Global { name: _, interface, version: _ } => {
-                if interface == "wl_compositor" {
-                    state.compositor_found = true;
-                    println!("✓ wl_compositor available");
+            wl_registry::Event::Global { name, interface, version } => {
+                if interface == GamescopePipewire::interface().name {
+                    let pipewire_interface = registry.bind::<GamescopePipewire, _, _>(name, version, qh, ());
+                    state.pipewire_interface = Some(pipewire_interface);
+                }
+
+                if interface == GamescopeInput::interface().name {
+                    let input_interface = registry.bind::<GamescopeInput, _, _>(name, version, qh, ());
+                    state.input_interface = Some(input_interface);
                 }
             }
             wl_registry::Event::GlobalRemove { name: _ } => {}
@@ -718,33 +768,92 @@ impl Dispatch<wl_registry::WlRegistry, ()> for GamescopeWaylandState {
         }
     }
 }
+
+
+impl Dispatch<GamescopePipewire, ()> for GamescopeWaylandState {
+    fn event(
+        state: &mut Self,
+        _proxy: &GamescopePipewire,
+        event: <GamescopePipewire as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        qh: &wayland_client::QueueHandle<Self>,
+    ) {
+        match event {
+            gamescope_pipewire::Event::StreamNode { node_id } => {
+                // println!("Got node id: {node_id}");
+                state.pipewire_node = Some(node_id);
+            }
+        }
+    }
+}
+
+impl Dispatch<GamescopeInput, ()> for GamescopeWaylandState {
+    fn event(
+        state: &mut Self,
+        _proxy: &GamescopeInput,
+        event: <GamescopeInput as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        qh: &wayland_client::QueueHandle<Self>,
+    ) {
+        match event {
+            gamescope_input::Event::MousePosition { x, y } => {
+                state.latest_mouse_potion = Some((x,y));
+            }
+            gamescope_input::Event::OutputSize { width, height } => {
+                state.latest_output_size = Some((width, height));
+            }
+        }
+    }
+}
+
+
 impl GamescopeWaylandState {
     pub fn new(path: PathBuf) -> Result<Self, String> {
         // Connect to display
         let unix_socket = std::os::unix::net::UnixStream::connect(path).map_err(|e| format!("Failed to connect to wayland socket: {e}"))?;
 
         let conn = Connection::from_socket(unix_socket).map_err(|e| format!("Connection error in wayland setup: {e}"))?;
-        let mut event_queue = conn.new_event_queue();
-        let qhandle = event_queue.handle();
+        let event_queue = Arc::new(Mutex::new(conn.new_event_queue()));
+
+        let mut state = Self {
+            input_interface: None,
+            pipewire_interface: None,
+            pipewire_node: None,
+
+            latest_output_size: None,
+            latest_mouse_potion: None,
+
+            event_queue: event_queue.clone(),
+        };
+
+        let mut locked_event_queue = event_queue.lock().map_err(|e| format!("Failed to lock event_queue: {e}"))?;
+        let qhandle = locked_event_queue.handle();
         let display = conn.display();
 
         // Get registry
         display.get_registry(&qhandle, ());
 
-        let mut state = Self {
-            compositor_found: false,
-        };
-
         // Dispatch one roundtrip to query globals
-        event_queue.roundtrip(&mut state).expect("Roundtrip failed");
+        locked_event_queue.roundtrip(&mut state).map_err(|e| format!("Roundtrip failed: {e}"))?;
 
-        if state.compositor_found {
-            println!("Wayland connection successful!");
-        } else {
-            println!("wl_compositor not found");
-        }
+        // Get pipewire id in second round trip.
+        locked_event_queue.roundtrip(&mut state).map_err(|e| format!("Second roundtrip failed: {e}"))?;
 
         Ok(state)
+    }
+
+    pub fn get_size(&mut self) -> Result<(u32, u32), String> {
+        let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
+        let event_queue = self.event_queue.clone();
+        let mut locked_event_queue = event_queue.lock().map_err(|e| format!("Failed to lock event_queue: {e}"))?;
+
+        input_interface.get_output_size();
+        self.latest_output_size = None;
+        locked_event_queue.roundtrip(self).map_err(|e| format!("Failed to dropcess round trip: {e}"))?;
+
+        self.latest_output_size.ok_or("No output size returned?".to_owned())
     }
 }
 
@@ -798,18 +907,20 @@ impl GamescopeSession {
         let wayland_display = wayland_response.map_err(|e| format!("Failed to get wldisplay: {e}"))?;
 
         
-        println!("wl_display got: {wayland_display}");
+        // println!("wl_display got: {wayland_display}");
 
         let xdg_runtime_dir = std::env::var("XDG_RUNTIME_DIR").map_err(|e| format!("XDG env var not set: {e}"))?; // Follow as I think gamescope does.
         let wayland_socket_path = std::path::PathBuf::from(xdg_runtime_dir).join(wayland_display);
 
         let wayland_state = GamescopeWaylandState::new(wayland_socket_path)?;
+        
 
 
-        let target = 0;
+
+        let pw_target = wayland_state.pipewire_node.ok_or("Unable to get pipewire interface!")?;
         
         Ok(Self {
-            video_ui: PipewireVideo::new(egl, target, sender, streams).map_err(|e| format!("Failed to create video: {e}"))?,
+            video_ui: PipewireVideo::new(egl, pw_target, sender, streams).map_err(|e| format!("Failed to create video: {e}"))?,
             mouse_data: (true, egui::PointerState::default()),
             child_proc,
             wayland_state

@@ -268,7 +268,7 @@ impl PipewireStream {
         let mut params = [pod];
         stream.connect(
             spa::utils::Direction::Input,
-            None,//Some(id),
+            Some(id),
             pw::stream::StreamFlags::AUTOCONNECT,
             &mut params,
         )?;
