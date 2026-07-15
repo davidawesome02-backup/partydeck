@@ -244,6 +244,10 @@ impl PipewireVideo {
             }
         }
 
+        if ui.input(|i| i.pointer.latest_pos().is_some_and(|x| rect.contains(x))) {
+            ui.set_cursor_icon(egui::CursorIcon::None);
+        }
+
         let renderer = self.renderer.clone();
         let callback = eframe::egui_glow::CallbackFn::new(move |info, painter| {
             let Ok(mut r) = renderer.lock() else { return; };

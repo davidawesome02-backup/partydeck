@@ -167,6 +167,47 @@ impl PartyApp {
 }
 
 impl eframe::App for PartyApp {
+    // Hack because of the return statements here:
+    /*
+    if pressed {
+        if is_cut_command(self.egui_input.modifiers, active_key) {
+            self.egui_input.events.push(egui::Event::Cut);
+            return;
+        } else if is_copy_command(self.egui_input.modifiers, active_key) {
+            self.egui_input.events.push(egui::Event::Copy);
+            return;
+        } else if is_paste_command(self.egui_input.modifiers, active_key) {
+            if let Some(contents) = self.clipboard.get() {
+                let contents = contents.replace("\r\n", "\n");
+                if !contents.is_empty() {
+                    self.egui_input.events.push(egui::Event::Paste(contents));
+                }
+            }
+            return;
+        }
+    } 
+    */
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        let mut i = 0;
+        while i < raw_input.events.len() {
+            if matches!(raw_input.events[i], egui::Event::Copy) {
+                raw_input.events.insert(
+                    i + 1,
+                    egui::Event::Key {
+                        key: egui::Key::C,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: raw_input.modifiers,
+                    },
+                );
+                i += 1;
+            }
+            i += 1;
+        }
+    }
+
+
     // fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
     //     if !raw_input.focused || self.task.is_some() {
     //         return;
