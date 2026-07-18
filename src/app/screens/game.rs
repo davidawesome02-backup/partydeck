@@ -2,8 +2,8 @@ use eframe::egui::{self, Ui};
 
 use crate::app::screens::{Panels, Route, Screen};
 use crate::app::state::AppState;
+use crate::app::toasts::Severity;
 use crate::handler::HANDLER_SPEC_CURRENT_VERSION;
-use crate::util::msg;
 
 pub struct GameScreen;
 
@@ -89,14 +89,16 @@ fn play(state: &mut AppState) {
         } else {
             ("a newer", "Consider updating PartyDeck.")
         };
-        msg(
+        state.toasts.push(
+            Severity::Warning,
             "Handler version mismatch",
-            &format!("This handler was made for {age} version of PartyDeck and may not work correctly. {advice} If it runs fine, update the handler's spec version to silence this warning."),
+            format!("This handler was made for {age} version of PartyDeck and may not work correctly. {advice} If it runs fine, update the handler's spec version to silence this warning."),
         );
     }
 
     if h.steam_appid.is_none() && h.path_gameroot.is_empty() {
-        msg(
+        state.toasts.push(
+            Severity::Warning,
             "Game root path not found",
             "Please specify the game's root folder.",
         );

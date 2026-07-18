@@ -86,5 +86,7 @@ impl eframe::App for PartyApp {
         central.show(ui, |ui| {
             screen.ui(state, ui);
         });
+
+        state.toasts.show(ui.ctx());
     }
 }

@@ -2,8 +2,9 @@ use eframe::egui::{self, Popup, RichText, Ui};
 
 use crate::app::screens::{NavTab, Route};
 use crate::app::state::{AppState, Mode};
+use crate::app::toasts::Severity;
 use crate::handler::{Handler, import_pd2};
-use crate::util::{msg, yesno};
+use crate::util::{msg, open_dir, yesno};
 
 pub fn top_panel(state: &mut AppState, tab: Option<NavTab>, ui: &mut Ui) {
     ui.horizontal(|ui| {
@@ -80,7 +81,7 @@ pub fn left_panel(state: &mut AppState, ui: &mut Ui) {
             }
             if ui.button("⬇").clicked() {
                 if let Err(e) = import_pd2() {
-                    msg("Error", &format!("Error importing PD2: {}", e));
+                    state.toasts.push(Severity::Error, "Couldn't import handler", e.to_string());
                 } else {
                     state.mode.rescan_handlers();
                 }
@@ -93,7 +94,7 @@ pub fn left_panel(state: &mut AppState, ui: &mut Ui) {
     ui.separator();
 
     let mut remove_requested: Option<usize> = None;
-    let AppState { mode, pending_route, .. } = state;
+    let AppState { mode, pending_route, toasts, .. } = state;
     egui::ScrollArea::vertical().show(ui, |ui| {
         let Mode::Full { handlers, selected } = mode else {
             return;
@@ -120,11 +121,8 @@ pub fn left_panel(state: &mut AppState, ui: &mut Ui) {
                     }
 
                     if ui.button("Open Folder").clicked() {
-                        if let Err(_) = std::process::Command::new("xdg-open")
-                            .arg(handlers[i].path_handler.clone())
-                            .status()
-                        {
-                            msg("Error", "Couldn't open handler folder!");
+                        if let Err(e) = open_dir(&handler.path_handler) {
+                            toasts.push(Severity::Error, "Couldn't open handler folder", e);
                         }
                     }
 
@@ -139,8 +137,7 @@ pub fn left_panel(state: &mut AppState, ui: &mut Ui) {
 
                     if ui.button("Export").clicked() {
                         if let Err(err) = handler.export_pd2() {
-                            println!("[partydeck] Failed to export handler: {}", err);
-                            msg("Error", &format!("Failed to export handler: {}", err));
+                            toasts.push(Severity::Error, "Couldn't export handler", err.to_string());
                         }
                     }
                 });

@@ -6,7 +6,7 @@ use rfd::FileDialog;
 use std::error::Error;
 use std::fs::{self, File};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
@@ -22,6 +22,20 @@ pub fn yesno(title: &str, contents: &str) -> bool {
         }
     }
     false
+}
+
+pub fn open_dir(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err(format!("{} does not exist", path.display()));
+    }
+    let mut child = Command::new("xdg-open")
+        .arg(path)
+        .spawn()
+        .map_err(|e| format!("couldn't run xdg-open: {e}"))?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 pub fn dir_dialog() -> Result<PathBuf, Box<dyn Error>> {

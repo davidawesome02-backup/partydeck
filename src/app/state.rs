@@ -1,5 +1,6 @@
 use super::config::{PartyConfig, load_cfg};
 use super::screens::Route;
+use super::toasts::Toasts;
 use crate::handler::{Handler, scan_handlers};
 use crate::input::{InputDevice, scan_input_devices};
 use crate::monitor::{Monitor, get_monitors_errorless};
@@ -16,6 +17,7 @@ pub struct AppState {
     pub pending_route: Option<Route>,
 
     pub mode: Mode,
+    pub toasts: Toasts,
 }
 
 pub enum Mode {
@@ -70,6 +72,7 @@ impl AppState {
             session: Session::default(),
             pending_route: None,
             mode,
+            toasts: Toasts::default(),
         }
     }
 
