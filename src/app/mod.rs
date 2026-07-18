@@ -1,5 +1,6 @@
 mod app;
 mod config;
+mod events;
 mod panels;
 mod screens;
 mod state;

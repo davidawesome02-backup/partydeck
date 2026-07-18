@@ -3,8 +3,9 @@ use eframe::egui::{self, Ui};
 use crate::app::config::*;
 use crate::app::screens::{NavTab, Panels, Screen};
 use crate::app::state::AppState;
+use crate::app::toasts::Severity;
 use crate::paths::PATH_PARTY;
-use crate::util::{msg, yesno};
+use crate::util::{msg, open_dir, yesno};
 
 #[derive(Default, PartialEq)]
 pub enum SettingsTab {
@@ -43,7 +44,7 @@ impl Screen for SettingsScreen {
             ui.horizontal(|ui| {
                 if ui.button("Save Settings").clicked() {
                     if let Err(e) = save_cfg(&state.options) {
-                        msg("Error", &format!("Couldn't save settings: {}", e));
+                        state.toasts.push(Severity::Error, "Couldn't save settings", e.to_string());
                     }
                 }
                 if ui.button("Restore Defaults").clicked() {
@@ -117,15 +118,12 @@ impl SettingsScreen {
 
         ui.separator();
 
-    if ui.button("Open PartyDeck Data Folder").clicked() {
-        if let Err(_) = std::process::Command::new("xdg-open")
-            .arg(PATH_PARTY.clone())
-            .status()
-        {
-            msg("Error", "Couldn't open PartyDeck Data Folder!");
+        if ui.button("Open PartyDeck Data Folder").clicked() {
+            if let Err(e) = open_dir(&PATH_PARTY) {
+                state.toasts.push(Severity::Error, "Couldn't open PartyDeck data folder", e);
+            }
         }
     }
-}
 
     fn settings_proton(&mut self, state: &mut AppState, ui: &mut Ui) {
         ui.horizontal(|ui| {

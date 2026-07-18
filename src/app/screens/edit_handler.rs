@@ -5,6 +5,7 @@ use rfd::FileDialog;
 
 use crate::app::screens::{Panels, Route, Screen};
 use crate::app::state::AppState;
+use crate::app::toasts::Severity;
 use crate::handler::*;
 use crate::paths::*;
 use crate::util::*;
@@ -67,7 +68,7 @@ impl Screen for EditHandlerScreen {
                     let dest = h.path_handler.join("icon.png");
                     if let Err(e) = std::fs::copy(file, dest) {
                         eprintln!("Failed to copy icon: {}", e);
-                        msg("Error copying icon", &format!("{}", e));
+                        state.toasts.push(Severity::Error, "Failed to copy icon", e.to_string());
                     }
                 }
             }
@@ -167,8 +168,9 @@ impl Screen for EditHandlerScreen {
         if h.spec_ver != HANDLER_SPEC_CURRENT_VERSION {
             if ui.button("Update Handler Specification Version").clicked() {
                 h.spec_ver = HANDLER_SPEC_CURRENT_VERSION;
-                msg(
-                    "Handler Specification Version Updated",
+                state.toasts.push(
+                    Severity::Info,
+                    "Handler specification version updated",
                     "Remember to save your changes.",
                 );
             }
@@ -177,7 +179,7 @@ impl Screen for EditHandlerScreen {
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
             if ui.button("Save").clicked() {
                 if let Err(e) = h.save_to_json() {
-                    msg("Error saving handler", &format!("{}", e));
+                    state.toasts.push(Severity::Error, "Couldn't save handler", e.to_string());
                 } else {
                     state.mode.rescan_handlers();
                     state.pending_route = Some(Route::Game);

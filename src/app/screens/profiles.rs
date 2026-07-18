@@ -2,9 +2,10 @@ use eframe::egui::{self, Ui};
 
 use crate::app::screens::{NavTab, Panels, Screen};
 use crate::app::state::AppState;
+use crate::app::toasts::Severity;
 use crate::paths::PATH_PARTY;
 use crate::profiles::{create_profile, scan_profiles};
-use crate::util::msg;
+use crate::util::{msg, open_dir};
 
 #[derive(Default)]
 pub struct ProfilesScreen {
@@ -29,11 +30,8 @@ impl Screen for ProfilesScreen {
             .show(ui, |ui| {
                 for profile in &state.profiles {
                     if ui.selectable_label(false, profile).clicked() {
-                        if let Err(_) = std::process::Command::new("xdg-open")
-                            .arg(PATH_PARTY.join("profiles").join(profile))
-                            .status()
-                        {
-                            msg("Error", "Couldn't open profile directory!");
+                        if let Err(e) = open_dir(&PATH_PARTY.join("profiles").join(profile)) {
+                            state.toasts.push(Severity::Error, "Couldn't open profile directory", e);
                         }
                     };
                 }

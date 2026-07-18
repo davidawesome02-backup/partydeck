@@ -1,5 +1,6 @@
 use super::config::{PartyConfig, load_cfg};
 use super::screens::Route;
+use super::events::AppEventSender;
 use super::toasts::Toasts;
 use crate::handler::{Handler, scan_handlers};
 use crate::input::{InputDevice, scan_input_devices};
@@ -17,6 +18,8 @@ pub struct AppState {
     pub pending_route: Option<Route>,
 
     pub mode: Mode,
+
+    pub events: AppEventSender,
     pub toasts: Toasts,
 }
 
@@ -53,7 +56,11 @@ impl Mode {
 }
 
 impl AppState {
-    pub fn new(monitors: Vec<Monitor>, handler_lite: Option<Handler>) -> Self {
+    pub fn new(
+        events: AppEventSender,
+        monitors: Vec<Monitor>,
+        handler_lite: Option<Handler>,
+    ) -> Self {
         let options = load_cfg();
         let input_devices = scan_input_devices(&options.pad_filter_type);
         let mode = match handler_lite {
@@ -72,6 +79,7 @@ impl AppState {
             session: Session::default(),
             pending_route: None,
             mode,
+            events,
             toasts: Toasts::default(),
         }
     }

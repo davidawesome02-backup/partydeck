@@ -209,30 +209,16 @@ pub fn clear_tmp() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub fn check_for_partydeck_update() -> bool {
-    // Try to get the latest release tag from GitHub
-    if let Ok(client) = reqwest::blocking::Client::new()
-        .get("https://api.github.com/repos/wunnr/partydeck/releases/latest")
+pub fn check_for_partydeck_update() -> Option<String> {
+    let response = reqwest::blocking::Client::new()
+        .get("https://api.github.com/repos/partydeck/partydeck/releases/latest")
         .header("User-Agent", "partydeck")
         .send()
-    {
-        if let Ok(release) = client.json::<serde_json::Value>() {
-            // Extract the tag name (vX.X.X format)
-            if let Some(tag_name) = release["tag_name"].as_str() {
-                // Strip the 'v' prefix
-                let latest_version = tag_name.strip_prefix('v').unwrap_or(tag_name);
-
-                // Get current version from env!
-                let current_version = env!("CARGO_PKG_VERSION");
-
-                // Compare versions directly
-                return latest_version != current_version;
-            }
-        }
-    }
-
-    // Default to false if any part of the process fails
-    false
+        .ok()?;
+    let release = response.json::<serde_json::Value>().ok()?;
+    let tag_name = release["tag_name"].as_str()?;
+    let latest_version = tag_name.strip_prefix('v').unwrap_or(tag_name);
+    (latest_version != env!("CARGO_PKG_VERSION")).then(|| tag_name.to_string())
 }
 
 pub trait SanitizePath {

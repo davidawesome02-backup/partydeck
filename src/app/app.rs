@@ -1,22 +1,46 @@
+use std::sync::mpsc;
 use eframe::egui;
 
+use super::events::{AppEvent, AppEventSender};
 use super::panels;
 use super::screens::{Panels, Route, Screen};
 use super::state::AppState;
 use crate::handler::Handler;
 use crate::monitor::Monitor;
+use crate::util::check_for_partydeck_update;
 
 pub struct PartyApp {
     state: AppState,
     screen: Box<dyn Screen>,
+    events_rx: mpsc::Receiver<AppEvent>,
     launched_fullscreen: bool,
 }
 
 impl PartyApp {
-    pub fn new(monitors: Vec<Monitor>, handler_lite: Option<Handler>, fullscreen: bool) -> Self {
-        let mut state = AppState::new(monitors, handler_lite);
+    pub fn new(
+        ctx: egui::Context,
+        monitors: Vec<Monitor>,
+        handler_lite: Option<Handler>,
+        fullscreen: bool
+    ) -> Self {
+        let (events, events_rx) = AppEventSender::channel(ctx);
+        let mut state = AppState::new(events.clone(), monitors, handler_lite);
         let screen = state.mode.home_route().build(&mut state);
-        Self { state, screen,launched_fullscreen: fullscreen }
+
+        if state.options.check_for_updates {
+            std::thread::spawn(move || {
+                if let Some(version) = check_for_partydeck_update() {
+                    events.send(AppEvent::UpdateAvailable(version));
+                }
+            });
+        }
+
+        Self {
+            state,
+            screen,
+            events_rx,
+            launched_fullscreen: fullscreen,
+        }
     }
 }
 
@@ -30,7 +54,11 @@ impl eframe::App for PartyApp {
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let state = &mut self.state;
-        
+
+        for event in self.events_rx.try_iter() {
+            event.apply(state);
+        }
+
         if let Some(route) = state.pending_route.take() {
             let fullscreen = matches!(route, Route::Session) || self.launched_fullscreen;
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(fullscreen));
@@ -43,7 +71,7 @@ impl eframe::App for PartyApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let PartyApp { state, screen } = self;
+        let PartyApp { state, screen, .. } = self;
 
         let panels = screen.panels(state);
 
