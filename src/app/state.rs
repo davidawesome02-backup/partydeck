@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use super::config::{PartyConfig, load_cfg};
 use super::screens::Route;
 use super::events::AppEventSender;
 use super::toasts::Toasts;
 use crate::handler::{Handler, scan_handlers};
 use crate::input::{InputDevice, scan_input_devices};
+use crate::launch::LaunchPlan;
 use crate::monitor::{Monitor, get_monitors_errorless};
 use crate::session::Session;
 
@@ -21,6 +24,7 @@ pub struct AppState {
 
     pub events: AppEventSender,
     pub toasts: Toasts,
+    pub active_session: Option<Arc<LaunchPlan>>,
 }
 
 pub enum Mode {
@@ -81,7 +85,12 @@ impl AppState {
             mode,
             events,
             toasts: Toasts::default(),
+            active_session: None,
         }
+    }
+
+    pub fn can_launch(&self) -> bool {
+        self.session.can_launch() && self.active_session.is_none()
     }
 
     pub fn rescan_monitors(&mut self) {

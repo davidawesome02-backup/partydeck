@@ -1,20 +1,135 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command};
 
-use crate::app::{PartyConfig, PadFilterType};
+use eframe::egui::Color32;
+
+use crate::app::{PadFilterType, PartyConfig};
 use crate::handler::*;
 use crate::input::*;
-use crate::instance::*;
+use crate::layout::WindowPosition;
+use crate::monitor::Monitor;
 use crate::paths::*;
 use crate::profiles::{create_profile, create_profile_gamesave};
+use crate::session::{InstanceId, Session};
 use crate::util::*;
 
-pub fn setup_profiles(
+pub struct LaunchPlan {
+    instances: Vec<InstanceSpec>,
+    devices: Vec<DeviceInfo>,
+}
+
+pub struct InstanceSpec {
+    pub id: InstanceId,
+    pub profname: String,
+    devices: Vec<DeviceHash>,
+    pub monitor: usize,
+    pub rect: WindowPosition,
+    pub color: Color32,
+}
+
+impl LaunchPlan {
+    pub fn build(
+        session: &Session,
+        monitors: &[Monitor],
+        devices: Vec<DeviceInfo>,
+        cfg: &PartyConfig,
+    ) -> Self {
+        let mut instances = Vec::new();
+        for display in &session.displays {
+            let monitor = &monitors[display.monitor];
+            let windows = display.window_positions(monitor.width(), monitor.height());
+            for (instance, mut rect) in display.instances.iter().zip(windows) {
+                // Fix for games that crash below gamescope's minimum resolution.
+                if cfg.gamescope_fix_lowres && rect.h < 600 {
+                    let ratio = rect.w as f32 / rect.h as f32;
+                    rect.h = 600;
+                    rect.w = (rect.h as f32 * ratio) as u32;
+                }
+                instances.push(InstanceSpec {
+                    id: instance.id,
+                    profname: instance.profname.clone(),
+                    devices: instance.devices.clone(),
+                    monitor: display.monitor,
+                    rect,
+                    color: instance.color,
+                });
+            }
+        }
+        Self { instances, devices }
+    }
+
+    pub fn instances(&self) -> &[InstanceSpec] {
+        &self.instances
+    }
+}
+
+pub fn run_launch(
     h: &Handler,
-    instances: &Vec<Instance>,
-) -> Result<(), Box<dyn std::error::Error>> {
+    plan: &LaunchPlan,
+    cfg: &PartyConfig,
+    on_spawn: impl Fn(&InstanceSpec),
+) -> Result<(), String> {
+    setup_profiles(h, plan).map_err(|e| format!("Failed setting up profiles: {e}"))?;
+
+    if h.is_saved_handler() && !cfg.disable_mount_gamedirs && cfg.profile_unique_dirs {
+        fuse_overlayfs_mount_gamedirs(h, &plan.instances)
+            .map_err(|e| format!("Failed mounting game directories: {e}"))?;
+    }
+
+    let cmds = launch_cmds(h, plan, cfg)
+        .map_err(|e| format!("Failed launching instances: {e}"))?;
+    print_launch_cmds(&cmds);
+
+    let sleep_time = h.pause_between_starts.unwrap_or(0.5);
+    let mut children: Vec<(usize, Child)> = Vec::new();
+    for (i, mut cmd) in cmds.into_iter().enumerate() {
+        on_spawn(&plan.instances[i]);
+
+        match cmd.spawn() {
+            Ok(child) => children.push((i, child)),
+            Err(e) => {
+                for (_, child) in &mut children {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                return Err(format!(
+                    "Failed to start instance for {}: {}",
+                    plan.instances[i].profname, e
+                ));
+            }
+        }
+
+        if i + 1 < plan.instances.len() {
+            std::thread::sleep(std::time::Duration::from_secs_f64(sleep_time));
+        }
+    }
+
+    while !children.is_empty() {
+        children.retain_mut(|(i, child)| match child.try_wait() {
+            Ok(None) => true,
+            Ok(Some(status)) => {
+                println!(
+                    "[partydeck] Instance {} ended: {}",
+                    plan.instances[*i].profname, status
+                );
+                false
+            }
+            Err(e) => {
+                println!("[partydeck] Error waiting on instance: {}", e);
+                let _ = child.kill();
+                let _ = child.wait();
+                false
+            }
+        });
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+
+    Ok(())
+}
+
+fn setup_profiles(h: &Handler, plan: &LaunchPlan) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n[partydeck] Instances:");
-    for instance in instances {
+    for instance in &plan.instances {
         if instance.profname.starts_with(".") {
             create_profile(&instance.profname)?;
         }
@@ -23,54 +138,16 @@ pub fn setup_profiles(
         }
         println!(
             "[partydeck] - Profile: {}, Monitor: {}, Resolution: {}x{}",
-            instance.profname, instance.monitor, instance.width, instance.height
+            instance.profname, instance.monitor, instance.rect.w, instance.rect.h
         );
     }
 
     Ok(())
 }
 
-pub fn launch_game(
+fn launch_cmds(
     h: &Handler,
-    input_devices: &[DeviceInfo],
-    instances: &Vec<Instance>,
-    cfg: &PartyConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let new_cmds = launch_cmds(h, input_devices, instances, cfg)?;
-    print_launch_cmds(&new_cmds);
-
-
-    let sleep_time = match h.pause_between_starts {
-        Some(f) => f,
-        None => 0.5,
-    };
-
-    let mut handles = Vec::new();
-
-    let mut i = 0;
-    for mut cmd in new_cmds {
-        let handle = cmd.spawn().map_err(|e| {
-            format!("Failed to start '{}': {}", cmd.get_program().to_string_lossy(), e)
-        })?;
-        handles.push(handle);
-
-        if i < instances.len() - 1 {
-            std::thread::sleep(std::time::Duration::from_secs_f64(sleep_time));
-        }
-        i += 1;
-    }
-
-    for mut handle in handles {
-        handle.wait()?;
-    }
-
-    Ok(())
-}
-
-pub fn launch_cmds(
-    h: &Handler,
-    input_devices: &[DeviceInfo],
-    instances: &Vec<Instance>,
+    plan: &LaunchPlan,
     cfg: &PartyConfig,
 ) -> Result<Vec<std::process::Command>, Box<dyn std::error::Error>> {
     let win = h.win();
@@ -103,11 +180,13 @@ pub fn launch_cmds(
         return Err(format!("Steam Runtime {runtime} not found! Runtime must be installed on the same drive that the Steam client is installed on.").into());
     }
 
-    let mut cmds: Vec<Command> = (0..instances.len())
+    let mut cmds: Vec<Command> = (0..plan.instances.len())
         .map(|_| Command::new(gamescope))
         .collect();
 
-    for (i, instance) in instances.iter().enumerate() {
+    for (i, instance) in plan.instances.iter().enumerate() {
+        let (width, height) = (instance.rect.w, instance.rect.h);
+
         let gamedir = if h.is_saved_handler() && !cfg.disable_mount_gamedirs && cfg.profile_unique_dirs {
             PATH_PARTY.join("tmp").join(format!("game-{}", i))
         } else {
@@ -177,22 +256,22 @@ pub fn launch_cmds(
         if h.use_mangohud {
             cmd.arg("--mangoapp");
         }
-        cmd.args([
-            "-W",
-            &instance.width.to_string(),
-            "-H",
-            &instance.height.to_string(),
-        ]);
+        cmd.args(["-W", &width.to_string(), "-H", &height.to_string()]);
         if cfg.gamescope_force_grab_cursor {
             cmd.arg("--force-grab-cursor");
         }
+
+        cmd.args(["--backend", "headless"]);
+
         if cfg.kbm_support {
             let mut instance_has_keyboard = false;
             let mut instance_has_mouse = false;
             let mut kbms = String::new();
 
-            for &d in &instance.devices {
-                let dev = &input_devices[d];
+            for dev in &plan.devices {
+                if !instance.devices.contains(&dev.hash) {
+                    continue;
+                }
                 if dev.device_type == DeviceType::Keyboard {
                     instance_has_keyboard = true;
                 } else if dev.device_type == DeviceType::Mouse {
@@ -222,9 +301,9 @@ pub fn launch_cmds(
         cmd.args(["--dev-bind", "/", "/"]);
         cmd.args(["--tmpfs", "/tmp"]);
         // Mask out any gamepads that aren't this player's
-        for (d, dev) in input_devices.iter().enumerate() {
+        for dev in &plan.devices {
             if !dev.enabled
-                || (!instance.devices.contains(&d) && dev.device_type == DeviceType::Gamepad)
+                || (!instance.devices.contains(&dev.hash) && dev.device_type == DeviceType::Gamepad)
             {
                 cmd.args(["--bind", "/dev/null", &dev.path]);
             }
@@ -351,10 +430,10 @@ pub fn launch_cmds(
         for arg in h.args.split_whitespace() {
             let processed_arg = match arg {
                 "$PROFILE" => &instance.profname,
-                "$WIDTH" => &instance.width.to_string(),
-                "$HEIGHT" => &instance.height.to_string(),
-                "$RESOLUTION" => &format!("{}x{}", instance.width, instance.height),
-                "$INSTANCECOUNT" => &instances.len().to_string(),
+                "$WIDTH" => &width.to_string(),
+                "$HEIGHT" => &height.to_string(),
+                "$RESOLUTION" => &format!("{}x{}", width, height),
+                "$INSTANCECOUNT" => &plan.instances.len().to_string(),
                 "$INSTANCENUM" => &i.to_string(),
                 "$GAMEDIR" => &gamedir.os_fmt(win),
                 "$HANDLERDIR" => &h.path_handler.os_fmt(win),
@@ -403,9 +482,9 @@ fn print_launch_cmds(cmds: &Vec<Command>) {
     }
 }
 
-pub fn fuse_overlayfs_mount_gamedirs(
+fn fuse_overlayfs_mount_gamedirs(
     h: &Handler,
-    instances: &Vec<Instance>,
+    instances: &[InstanceSpec],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = PATH_PARTY.join("tmp");
     let mut path_lowerdir = h.get_game_rootpath()?;

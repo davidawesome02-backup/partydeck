@@ -1,9 +1,13 @@
+use std::sync::Arc;
+
 use eframe::egui::{self, Color32, RichText, Ui};
 
 use crate::app::config::save_cfg;
-use crate::app::screens::{Panels, Screen};
+use crate::app::screens::{Panels, Route, Screen};
+use crate::app::events::spawn_launch_worker;
 use crate::app::state::AppState;
 use crate::input::{DeviceHash, DeviceInfo, DeviceType};
+use crate::launch::LaunchPlan;
 use crate::layout::LayoutKind;
 use crate::profiles::{next_temp_name, scan_profiles};
 use crate::session::{Display, InstanceId};
@@ -47,9 +51,8 @@ impl Screen for InstancesScreen {
             ui.heading("Instances");
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.add_enabled(state.session.can_launch(), egui::Button::new("Launch")).clicked()
-                {
-                    //TODO self.launch(state);
+                if ui.add_enabled(state.can_launch(), egui::Button::new("Launch")).clicked() {
+                    self.launch(state);
                 }
                 ui.toggle_value(&mut self.show_right_panel, "🎮")
                     .on_hover_text("Right panel");
@@ -125,6 +128,21 @@ impl InstancesScreen {
 
     fn clear_selections(&mut self) {
         self.edit_modal = None;
+    }
+
+    fn launch(&mut self, state: &mut AppState) {
+        let Some(handler) = state.mode.active_handler() else {
+            return;
+        };
+        let handler = handler.clone();
+        let cfg = state.options.clone();
+        let _ = save_cfg(&cfg);
+        let devices: Vec<DeviceInfo> = state.input_devices.iter().map(|device| device.info()).collect();
+        let plan = Arc::new(LaunchPlan::build(&state.session, &state.monitors, devices, &cfg));
+
+        state.active_session = Some(plan.clone());
+        state.pending_route = Some(Route::Session);
+        spawn_launch_worker(&state.events, handler, plan, cfg);
     }
 
     fn open_new_instance(&mut self, state: &mut AppState) {
