@@ -1,11 +1,12 @@
 use eframe::egui::{self, Ui};
 
 use crate::app::config::*;
+use crate::app::events::spawn_trash_removal;
 use crate::app::screens::{NavTab, Panels, Screen};
 use crate::app::state::AppState;
 use crate::app::toasts::Severity;
 use crate::paths::PATH_PARTY;
-use crate::util::{msg, open_dir, yesno};
+use crate::util::{open_dir, trash_dir};
 
 #[derive(Default, PartialEq)]
 pub enum SettingsTab {
@@ -19,6 +20,7 @@ pub enum SettingsTab {
 pub struct SettingsScreen {
     tab: SettingsTab,
     info: &'static str,
+    confirm_erase: bool,
 }
 
 impl Screen for SettingsScreen {
@@ -61,10 +63,43 @@ impl Screen for SettingsScreen {
                 });
             });
         });
+
+        self.erase_modal(state, ui.ctx());
     }
 }
 
 impl SettingsScreen {
+    fn erase_modal(&mut self, state: &mut AppState, ctx: &egui::Context) {
+        if !self.confirm_erase {
+            return;
+        }
+
+        let (confirmed, cancelled) = egui::Modal::new(egui::Id::new("erase_prefixes")).show(ctx, |ui| {
+            ui.set_max_width(420.0);
+            ui.heading("Erase Proton prefix data?");
+            ui.label("This will erase all Proton prefixes used by PartyDeck. This shouldn't erase profile/game-specific data, but exercise caution.");
+            ui.add_space(8.0);
+            ui.horizontal(|ui| (ui.button("Erase").clicked(), ui.button("Cancel").clicked())).inner
+        }).inner;
+
+        self.confirm_erase = !(confirmed || cancelled);
+        if !confirmed {
+            return;
+        }
+
+        let prefixes = PATH_PARTY.join("prefixes");
+        if prefixes.exists() {
+            match trash_dir(&prefixes) {
+                Ok(trash) => spawn_trash_removal(&state.events, trash),
+                Err(e) => {
+                    state.toasts.push(Severity::Error, "Couldn't erase prefix data", e);
+                    return;
+                }
+            }
+        }
+        state.toasts.push(Severity::Info, "Proton prefix data erased", "");
+    }
+
     fn settings_general(&mut self, state: &mut AppState, ui: &mut Ui) {
         let check_for_app_updates = ui.checkbox(
             &mut state.options.check_for_updates,
@@ -143,20 +178,10 @@ impl SettingsScreen {
         let proton_wow64_check = ui.checkbox(&mut state.options.proton_wow64, "Run Proton in WoW64 mode");
         self.hint(proton_wow64_check.hovered(), "DEFAULT: Enabled\n\nRuns Proton games in the new Wine WoW64 mode. If unsure, leave this checked.");
 
-    if ui.button("Erase All Proton Prefix Data").clicked() {
-        if yesno(
-            "Erase Prefix?",
-            "This will erase all Proton prefixes used by PartyDeck. This shouldn't erase profile/game-specific data, but exercise caution. Are you sure?",
-        ) && PATH_PARTY.join("prefixes").exists()
-        {
-            if let Err(err) = std::fs::remove_dir_all(PATH_PARTY.join("prefixes")) {
-                msg("Error", &format!("Couldn't erase pfx data: {}", err));
-            } else {
-                msg("Data Erased", "Proton prefix data successfully erased.");
-            }
+        if ui.button("Erase All Proton Prefix Data").clicked() {
+            self.confirm_erase = true;
         }
     }
-}
 
     fn settings_gamescope(&mut self, state: &mut AppState, ui: &mut Ui) {
         let gamescope_lowres_fix_check = ui.checkbox(

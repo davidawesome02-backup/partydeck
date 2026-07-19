@@ -11,7 +11,7 @@ use crate::handler::Handler;
 use crate::launch::{LaunchPlan, run_launch};
 use crate::profiles::remove_guest_profiles;
 use crate::session::InstanceId;
-use crate::util::clear_tmp;
+use crate::util::{clear_tmp, remove_trash};
 
 /// Status feedback from background threads to the UI.
 pub enum AppEvent {
@@ -105,3 +105,16 @@ pub fn spawn_launch_worker(
     });
 }
 
+pub fn spawn_trash_removal(events: &AppEventSender, trash: PathBuf) {
+    let events = events.clone();
+    std::thread::spawn(move || {
+        if let Err(e) = remove_trash(&trash) {
+            events.send(AppEvent::Toast(
+                Severity::Error,
+                "Failed to remove files".into(),
+                e,
+                None,
+            ));
+        }
+    });
+}

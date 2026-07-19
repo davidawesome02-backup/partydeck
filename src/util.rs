@@ -1,6 +1,5 @@
 use crate::paths::{PATH_HOME, PATH_PARTY};
 
-use dialog::{Choice, DialogBox};
 use eframe::egui::Color32;
 use rfd::FileDialog;
 use std::error::Error;
@@ -10,19 +9,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
-
-pub fn msg(title: &str, contents: &str) {
-    let _ = dialog::Message::new(contents).title(title).show();
-}
-
-pub fn yesno(title: &str, contents: &str) -> bool {
-    if let Ok(prompt) = dialog::Question::new(contents).title(title).show() {
-        if prompt == Choice::Yes {
-            return true;
-        }
-    }
-    false
-}
 
 pub fn open_dir(path: &Path) -> Result<(), String> {
     if !path.exists() {
@@ -193,6 +179,21 @@ pub fn fuse_overlayfs_unmount_gamedirs() -> Result<(), Box<dyn std::error::Error
     }
 
     Ok(())
+}
+
+pub fn trash_dir(dir: &Path) -> Result<PathBuf, String> {
+    let tmp = PATH_PARTY.join("tmp");
+    fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    let trash = tmp.join(".trash");
+    fs::rename(dir, &trash).map_err(|e| e.to_string())?;
+    Ok(trash)
+}
+
+pub fn remove_trash(trash: &Path) -> Result<(), String> {
+    match fs::remove_dir_all(trash) {
+        Err(e) if trash.exists() => Err(e.to_string()),
+        _ => Ok(()),
+    }
 }
 
 pub fn clear_tmp() -> Result<(), Box<dyn Error>> {

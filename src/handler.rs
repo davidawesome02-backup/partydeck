@@ -182,14 +182,11 @@ impl Handler {
         out
     }
 
-    pub fn remove_handler(&self) -> Result<(), Box<dyn Error>> {
+    pub fn remove_handler(&self) -> Result<PathBuf, String> {
         if !self.is_saved_handler() {
             return Err("No handler directory to remove".into());
         }
-        // TODO: Also return err if handler path exists but is not inside PATH_PARTY/handlers
-        std::fs::remove_dir_all(self.path_handler.clone())?;
-
-        Ok(())
+        trash_dir(&self.path_handler)
     }
 
     pub fn get_game_rootpath(&self) -> Result<String, Box<dyn Error>> {
@@ -228,6 +225,9 @@ impl Handler {
                 } else {
                     return Err("Name cannot be empty".into());
                 }
+            }
+            if self.name == "." || self.name == ".." || self.name.contains('/') {
+                return Err("Handler name cannot be a path".into());
             }
             if !PATH_PARTY.join("handlers").join(&self.name).exists() {
                 self.path_handler = PATH_PARTY.join("handlers").join(&self.name);

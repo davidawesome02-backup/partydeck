@@ -12,6 +12,7 @@ use crate::util::check_for_partydeck_update;
 pub struct PartyApp {
     state: AppState,
     screen: Box<dyn Screen>,
+    left_panel: panels::LeftPanel,
     events_rx: mpsc::Receiver<AppEvent>,
     launched_fullscreen: bool,
 }
@@ -38,6 +39,7 @@ impl PartyApp {
         Self {
             state,
             screen,
+            left_panel: panels::LeftPanel::default(),
             events_rx,
             launched_fullscreen: fullscreen,
         }
@@ -71,7 +73,7 @@ impl eframe::App for PartyApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let PartyApp { state, screen, .. } = self;
+        let PartyApp { state, screen, left_panel, .. } = self;
 
         let panels = screen.panels(state);
 
@@ -86,7 +88,7 @@ impl eframe::App for PartyApp {
                 .resizable(false)
                 .exact_size(200.0)
                 .show(ui, |ui| {
-                    panels::left_panel(state, ui);
+                    left_panel.show(state, ui);
                 });
         }
 

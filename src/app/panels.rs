@@ -1,10 +1,11 @@
 use eframe::egui::{self, Popup, RichText, Ui};
 
+use crate::app::events::spawn_trash_removal;
 use crate::app::screens::{NavTab, Route};
 use crate::app::state::{AppState, Mode};
 use crate::app::toasts::Severity;
 use crate::handler::{Handler, import_pd2};
-use crate::util::{msg, open_dir, yesno};
+use crate::util::open_dir;
 
 pub fn top_panel(state: &mut AppState, tab: Option<NavTab>, ui: &mut Ui) {
     ui.horizontal(|ui| {
@@ -71,90 +72,106 @@ pub fn top_panel(state: &mut AppState, tab: Option<NavTab>, ui: &mut Ui) {
     });
 }
 
-pub fn left_panel(state: &mut AppState, ui: &mut Ui) {
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.heading("Games");
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("➕").clicked() {
-                state.pending_route = Some(Route::EditHandler(Handler::default()));
-            }
-            if ui.button("⬇").clicked() {
-                if let Err(e) = import_pd2() {
-                    state.toasts.push(Severity::Error, "Couldn't import handler", e.to_string());
-                } else {
+#[derive(Default)]
+pub struct LeftPanel {
+    pending_removal: Option<Handler>,
+}
+
+impl LeftPanel {
+    pub fn show(&mut self, state: &mut AppState, ui: &mut Ui) {
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.heading("Games");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("➕").clicked() {
+                    state.pending_route = Some(Route::EditHandler(Handler::default()));
+                }
+                if ui.button("⬇").clicked() {
+                    if let Err(e) = import_pd2() {
+                        state.toasts.push(Severity::Error, "Couldn't import handler", e.to_string());
+                    } else {
+                        state.mode.rescan_handlers();
+                    }
+                }
+                if ui.button("🔄").clicked() {
                     state.mode.rescan_handlers();
                 }
-            }
-            if ui.button("🔄").clicked() {
-                state.mode.rescan_handlers();
+            });
+        });
+        ui.separator();
+
+        let AppState { mode, pending_route, toasts, .. } = state;
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            let Mode::Full { handlers, selected } = mode else {
+                return;
+            };
+            for (i, handler) in handlers.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Image::new(handler.icon())
+                            .max_width(16.0)
+                            .corner_radius(2),
+                    );
+
+                    let btn = ui.selectable_value(selected, i, handler.display_clamp());
+                    if btn.has_focus() {
+                        btn.scroll_to_me(None);
+                    }
+                    if btn.clicked() {
+                        *pending_route = Some(Route::Game);
+                    };
+
+                    Popup::context_menu(&btn).show(|ui| {
+                        if ui.button("Edit").clicked() {
+                            *pending_route = Some(Route::EditHandler(handler.clone()));
+                        }
+                        if ui.button("Open Folder").clicked() {
+                            if let Err(e) = open_dir(&handler.path_handler) {
+                                toasts.push(Severity::Error, "Couldn't open handler folder", e);
+                            }
+                        }
+                        if ui.button("Remove").clicked() {
+                            self.pending_removal = Some(handler.clone());
+                        }
+                        if ui.button("Export").clicked() {
+                            if let Err(err) = handler.export_pd2() {
+                                toasts.push(Severity::Error, "Couldn't export handler", err.to_string());
+                            }
+                        }
+                    });
+                });
             }
         });
-    });
-    ui.separator();
 
-    let mut remove_requested: Option<usize> = None;
-    let AppState { mode, pending_route, toasts, .. } = state;
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        let Mode::Full { handlers, selected } = mode else {
-            return;
-        };
-        for (i, handler) in handlers.iter().enumerate() {
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::Image::new(handler.icon())
-                        .max_width(16.0)
-                        .corner_radius(2),
-                );
+        self.removal_modal(state, ui.ctx());
+    }
 
-                let btn = ui.selectable_value(selected, i, handler.display_clamp());
-                if btn.has_focus() {
-                    btn.scroll_to_me(None);
+    fn removal_modal(&mut self, state: &mut AppState, ctx: &egui::Context) {
+        let Some(handler) = &self.pending_removal else { return };
+
+        let (confirmed, cancelled) = egui::Modal::new(egui::Id::new("remove_handler")).show(ctx, |ui| {
+            ui.set_max_width(420.0);
+            ui.heading(format!("Remove {}?", handler.display()));
+            ui.label("This permanently deletes the handler and its files.");
+            ui.add_space(8.0);
+            ui.horizontal(|ui| (ui.button("Remove").clicked(), ui.button("Cancel").clicked())).inner
+        }).inner;
+
+        if confirmed {
+            match handler.remove_handler() {
+                Ok(trash) => {
+                    spawn_trash_removal(&state.events, trash);
+                    state.mode.rescan_handlers();
+                    if state.mode.active_handler().is_none() {
+                        state.pending_route = Some(Route::Home);
+                    }
+                    state.toasts.push(Severity::Info, "Handler removed", "");
                 }
-                if btn.clicked() {
-                    *pending_route = Some(Route::Game);
-                };
-
-                Popup::context_menu(&btn).show(|ui| {
-                    if ui.button("Edit").clicked() {
-                        *pending_route = Some(Route::EditHandler(handler.clone()));
-                    }
-
-                    if ui.button("Open Folder").clicked() {
-                        if let Err(e) = open_dir(&handler.path_handler) {
-                            toasts.push(Severity::Error, "Couldn't open handler folder", e);
-                        }
-                    }
-
-                    if ui.button("Remove").clicked() {
-                        if yesno(
-                            "Remove handler?",
-                            &format!("Are you sure you want to remove {}?", handlers[i].display()),
-                        ) {
-                            remove_requested = Some(i);
-                        }
-                    }
-
-                    if ui.button("Export").clicked() {
-                        if let Err(err) = handler.export_pd2() {
-                            toasts.push(Severity::Error, "Couldn't export handler", err.to_string());
-                        }
-                    }
-                });
-            });
-        }
-    });
-
-    if let Some(i) = remove_requested {
-        if let Mode::Full { handlers, .. } = &state.mode {
-            if let Err(err) = handlers[i].remove_handler() {
-                println!("[partydeck] Failed to remove handler: {}", err);
-                msg("Error", &format!("Failed to remove handler: {}", err));
+                Err(e) => state.toasts.push(Severity::Error, "Couldn't remove handler", e),
             }
         }
-        state.mode.rescan_handlers();
-        if state.mode.active_handler().is_none() {
-            state.pending_route = Some(Route::Home);
+        if confirmed || cancelled {
+            self.pending_removal = None;
         }
     }
 }

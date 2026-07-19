@@ -5,7 +5,7 @@ use crate::app::state::AppState;
 use crate::app::toasts::Severity;
 use crate::paths::PATH_PARTY;
 use crate::profiles::{create_profile, scan_profiles};
-use crate::util::{msg, open_dir};
+use crate::util::open_dir;
 
 #[derive(Default)]
 pub struct ProfilesScreen {
@@ -61,14 +61,13 @@ impl ProfilesScreen {
             ui.separator();
             ui.label("Enter name (must be alphanumeric):");
             ui.text_edit_singleline(name);
+            let valid = !name.is_empty() && name.chars().all(char::is_alphanumeric);
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button("Create").clicked() {
-                    if !name.is_empty() && name.chars().all(char::is_alphanumeric) {
-                        create_profile(name).unwrap();
-                        state.profiles = scan_profiles(false);
-                    } else {
-                        msg("Error", "Invalid name");
+                if ui.add_enabled(valid, egui::Button::new("Create")).clicked() {
+                    match create_profile(name) {
+                        Ok(()) => state.profiles = scan_profiles(false),
+                        Err(e) => state.toasts.push(Severity::Error, "Couldn't create profile", e.to_string()),
                     }
                     close = true;
                 }
