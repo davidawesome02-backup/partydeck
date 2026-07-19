@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use eframe::egui;
 use crate::session::InstanceId;
@@ -85,46 +86,50 @@ impl Toast {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Toasts {
-    items: Vec<Toast>,
+    items: Arc<Mutex<Vec<Toast>>>,
 }
 
 impl Toasts {
-    pub fn push(&mut self, severity: Severity, title: impl Into<String>, body: impl Into<String>) {
-        self.items.push(Toast::new(severity, title, body));
+    pub fn push(&self, severity: Severity, title: impl Into<String>, body: impl Into<String>) {
+        self.items.lock().unwrap().push(Toast::new(severity, title, body));
     }
 
     /// A toast pinned to `target` session tile.
     pub fn push_for(
-        &mut self,
+        &self,
         target: InstanceId,
         severity: Severity,
         title: impl Into<String>,
         body: impl Into<String>,
     ) {
-        self.items.push(Toast { target: Some(target), ..Toast::new(severity, title, body) });
+        self.items
+            .lock()
+            .unwrap()
+            .push(Toast { target: Some(target), ..Toast::new(severity, title, body) });
     }
 
     /// A toast that opens `url` when clicked.
     pub fn push_linked(
-        &mut self,
+        &self,
         severity: Severity,
         title: impl Into<String>,
         body: impl Into<String>,
         url: impl Into<String>,
     ) {
-        self.items.push(Toast {
+        self.items.lock().unwrap().push(Toast {
             url: Some(url.into()),
             expires_at: Some(Instant::now() + Duration::from_secs(12)),
             ..Toast::new(severity, title, body)
         });
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) {
+    pub fn show(&self, ctx: &egui::Context) {
+        let mut items = self.items.lock().unwrap();
         let now = Instant::now();
-        self.items.retain(|toast| toast.alive(now));
-        if self.items.is_empty() {
+        items.retain(|toast| toast.alive(now));
+        if items.is_empty() {
             return;
         }
 
@@ -133,13 +138,14 @@ impl Toasts {
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing.y = 10.0;
-                self.show_stack(ui, 320.0, None);
+                Self::show_stack(&mut items, ui, 320.0, None);
             });
     }
 
-    pub fn show_for_instance(&mut self, ctx: &egui::Context, id: InstanceId, rect: egui::Rect) {
+    pub fn show_for_instance(&self, ctx: &egui::Context, id: InstanceId, rect: egui::Rect) {
+        let mut items = self.items.lock().unwrap();
         let now = Instant::now();
-        if !self.items.iter().any(|toast| toast.target == Some(id) && toast.alive(now)) {
+        if !items.iter().any(|toast| toast.target == Some(id) && toast.alive(now)) {
             return;
         }
 
@@ -152,14 +158,19 @@ impl Toasts {
                 ui.shrink_clip_rect(rect);
                 ui.spacing_mut().item_spacing.y = 6.0;
                 let max_width = (rect.width() - 16.0).min(320.0);
-                self.show_stack(ui, max_width, Some(id));
+                Self::show_stack(&mut items, ui, max_width, Some(id));
             });
     }
 
-    fn show_stack(&mut self, ui: &mut egui::Ui, max_width: f32, target: Option<InstanceId>) {
+    fn show_stack(
+        items: &mut Vec<Toast>,
+        ui: &mut egui::Ui,
+        max_width: f32,
+        target: Option<InstanceId>,
+    ) {
         let now = Instant::now();
         let mut dismiss = None;
-        for (i, toast) in self.items.iter().enumerate() {
+        for (i, toast) in items.iter().enumerate() {
             if toast.target != target || !toast.alive(now) {
                 continue;
             }
@@ -180,14 +191,14 @@ impl Toasts {
             }
         }
         if let Some(i) = dismiss {
-            self.items.remove(i);
+            items.remove(i);
         }
     }
 
     // Remove targets on instance toasts when the session is over so they show
     // in the global stack instead of waiting on tiles that will never draw again.
-    pub fn release_targets(&mut self) {
-        for toast in &mut self.items {
+    pub fn release_targets(&self) {
+        for toast in self.items.lock().unwrap().iter_mut() {
             toast.target = None;
         }
     }

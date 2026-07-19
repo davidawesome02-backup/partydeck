@@ -141,7 +141,7 @@ impl InstancesScreen {
         let plan = Arc::new(LaunchPlan::build(&state.session, &state.monitors, devices, &cfg));
 
         state.active_session = Some(plan.clone());
-        state.pending_route = Some(Route::Session);
+        state.pending_route = Some(Route::Session(plan.clone()));
         spawn_launch_worker(&state.events, handler, plan, cfg);
     }
 

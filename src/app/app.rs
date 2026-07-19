@@ -3,7 +3,7 @@ use eframe::egui;
 
 use super::events::{AppEvent, AppEventSender};
 use super::panels;
-use super::screens::{Panels, Route, Screen};
+use super::screens::{Panels, Screen};
 use super::state::AppState;
 use crate::handler::Handler;
 use crate::monitor::Monitor;
@@ -15,6 +15,7 @@ pub struct PartyApp {
     left_panel: panels::LeftPanel,
     events_rx: mpsc::Receiver<AppEvent>,
     launched_fullscreen: bool,
+    pinned_monitor: Option<String>,
 }
 
 impl PartyApp {
@@ -42,6 +43,7 @@ impl PartyApp {
             left_panel: panels::LeftPanel::default(),
             events_rx,
             launched_fullscreen: fullscreen,
+            pinned_monitor: None,
         }
     }
 }
@@ -62,9 +64,15 @@ impl eframe::App for PartyApp {
         }
 
         if let Some(route) = state.pending_route.take() {
-            let fullscreen = matches!(route, Route::Session) || self.launched_fullscreen;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(fullscreen));
             self.screen = route.build(state);
+            let pin = self.screen.pinned_monitor();
+            if pin != self.pinned_monitor {
+                match &pin {
+                    Some(name) => ctx.send_viewport_cmd(egui::ViewportCommand::SetMonitorName(name.clone())),
+                    None => ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.launched_fullscreen)),
+                }
+                self.pinned_monitor = pin;
+            }
         }
 
         if ctx.input(|input| input.focused) {

@@ -14,11 +14,14 @@ use profiles::ProfilesScreen;
 use session::SessionScreen;
 use settings::SettingsScreen;
 
+use std::sync::Arc;
+
 use eframe::egui;
 
 use super::state::AppState;
 use crate::handler::Handler;
 use crate::input::PadButton;
+use crate::launch::LaunchPlan;
 
 pub enum Route {
     Home,
@@ -27,7 +30,7 @@ pub enum Route {
     EditHandler(Handler),
     Game,
     Instances,
-    Session,
+    Session(Arc<LaunchPlan>),
 }
 
 impl Route {
@@ -39,7 +42,7 @@ impl Route {
             Route::EditHandler(handler) => Box::new(EditHandlerScreen::new(handler)),
             Route::Game => Box::new(GameScreen),
             Route::Instances => Box::new(InstancesScreen::new(state)),
-            Route::Session => Box::new(SessionScreen),
+            Route::Session(plan) => Box::new(SessionScreen::new(plan)),
         }
     }
 }
@@ -92,6 +95,11 @@ pub trait Screen {
     /// Which surrounding panels this screen wants, none by default.
     fn panels(&self, _state: &AppState) -> Panels {
         Panels::default()
+    }
+
+    /// Which monitor this screen fullscreens the window on, none by default
+    fn pinned_monitor(&self) -> Option<String> {
+        None
     }
 
     /// Bottom panel content to be drawn for this screen
