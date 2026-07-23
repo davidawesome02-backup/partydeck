@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::config::{PartyConfig, load_cfg};
@@ -8,7 +9,10 @@ use crate::handler::{Handler, scan_handlers};
 use crate::input::{InputDevice, scan_input_devices};
 use crate::launch::LaunchPlan;
 use crate::monitor::{Monitor, get_monitors_errorless};
-use crate::session::Session;
+use crate::session::{InstanceId, Session};
+use crate::video::egl::EglApi;
+use crate::video::gamescope::GamescopeConnection;
+use crate::video::pipewire::PipewireInstance;
 
 pub struct AppState {
     pub options: PartyConfig,
@@ -25,6 +29,12 @@ pub struct AppState {
     pub events: AppEventSender,
     pub toasts: Toasts,
     pub active_session: Option<Arc<LaunchPlan>>,
+
+    pub egl: Arc<EglApi>,
+    pub pipewire: Option<PipewireInstance>,
+    /// Gamescope connections established by the launch worker, waiting for the
+    /// session screen to wrap them in stream views on the GL thread.
+    pub pending_streams: HashMap<InstanceId, GamescopeConnection>,
 }
 
 pub enum Mode {
@@ -64,6 +74,7 @@ impl AppState {
         events: AppEventSender,
         monitors: Vec<Monitor>,
         handler_lite: Option<Handler>,
+        egl: Arc<EglApi>,
     ) -> Self {
         let options = load_cfg();
         let input_devices = scan_input_devices(&options.pad_filter_type);
@@ -74,6 +85,10 @@ impl AppState {
                 selected: 0,
             },
         };
+
+        let pipewire = PipewireInstance::new()
+            .inspect_err(|e| eprintln!("Failed to start pipewire thread: {e}"))
+            .ok();
 
         Self {
             options,
@@ -86,6 +101,9 @@ impl AppState {
             events,
             toasts: Toasts::default(),
             active_session: None,
+            egl,
+            pipewire,
+            pending_streams: HashMap::new(),
         }
     }
 

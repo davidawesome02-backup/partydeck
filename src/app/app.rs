@@ -1,4 +1,4 @@
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use eframe::egui;
 
 use super::events::{AppEvent, AppEventSender};
@@ -8,6 +8,7 @@ use super::state::AppState;
 use crate::handler::Handler;
 use crate::monitor::Monitor;
 use crate::util::check_for_partydeck_update;
+use crate::video::egl::EglApi;
 
 pub struct PartyApp {
     state: AppState,
@@ -23,10 +24,11 @@ impl PartyApp {
         ctx: egui::Context,
         monitors: Vec<Monitor>,
         handler_lite: Option<Handler>,
-        fullscreen: bool
+        fullscreen: bool,
+        egl: Arc<EglApi>,
     ) -> Self {
         let (events, events_rx) = AppEventSender::channel(ctx);
-        let mut state = AppState::new(events.clone(), monitors, handler_lite);
+        let mut state = AppState::new(events.clone(), monitors, handler_lite, egl);
         let screen = state.mode.home_route().build(&mut state);
 
         if state.options.check_for_updates {
@@ -52,6 +54,28 @@ impl eframe::App for PartyApp {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         if !raw_input.focused {
             return;
+        }
+
+        // egui swallows Ctrl+C into a Copy event before it reaches keys_down,
+        // so re-insert the key press for forwarding into game instances.
+        if self.state.active_session.is_some() {
+            let mut i = 0;
+            while i < raw_input.events.len() {
+                if matches!(raw_input.events[i], egui::Event::Copy) {
+                    raw_input.events.insert(
+                        i + 1,
+                        egui::Event::Key {
+                            key: egui::Key::C,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: raw_input.modifiers,
+                        },
+                    );
+                    i += 1;
+                }
+                i += 1;
+            }
         }
         //TODO Add a better gamepad handling system
     }

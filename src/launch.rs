@@ -1,3 +1,4 @@
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 
@@ -10,6 +11,7 @@ use crate::paths::*;
 use crate::profiles::{create_profile, create_profile_gamesave};
 use crate::session::{InstanceId, Session};
 use crate::util::*;
+use crate::video::gamescope::GamescopeConnection;
 
 pub struct LaunchPlan {
     instances: Vec<InstanceSpec>,
@@ -87,6 +89,7 @@ pub fn run_launch(
     plan: &LaunchPlan,
     cfg: &PartyConfig,
     on_spawn: impl Fn(&InstanceSpec),
+    on_stream: impl Fn(&InstanceSpec, Result<GamescopeConnection, String>),
 ) -> Result<(), String> {
     setup_profiles(h, plan).map_err(|e| format!("Failed setting up profiles: {e}"))?;
 
@@ -95,17 +98,26 @@ pub fn run_launch(
             .map_err(|e| format!("Failed mounting game directories: {e}"))?;
     }
 
-    let cmds = launch_cmds(h, plan, cfg)
+    let (cmds, ready_pipes) = launch_cmds(h, plan, cfg)
         .map_err(|e| format!("Failed launching instances: {e}"))?;
     print_launch_cmds(&cmds);
 
     let sleep_time = h.pause_between_starts.unwrap_or(0.5);
     let mut children: Vec<(usize, Child)> = Vec::new();
-    for (i, mut cmd) in cmds.into_iter().enumerate() {
+    for (i, (mut cmd, (ready_read, ready_write))) in cmds.into_iter().zip(ready_pipes).enumerate() {
         on_spawn(&plan.instances[i]);
 
         match cmd.spawn() {
-            Ok(child) => children.push((i, child)),
+            Ok(child) => {
+                children.push((i, child));
+                // Close our copy of the write end so the pipe reports EOF if
+                // gamescope dies before announcing its displays.
+                drop(ready_write);
+                on_stream(
+                    &plan.instances[i],
+                    GamescopeConnection::from_readiness_pipe(ready_read),
+                );
+            }
             Err(e) => {
                 for (_, child) in &mut children {
                     let _ = child.kill();
@@ -167,11 +179,15 @@ fn setup_profiles(h: &Handler, plan: &LaunchPlan) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
+/// Read/write ends of a gamescope `-R` readiness pipe; the write end must
+/// stay open (and inheritable) until the instance has spawned.
+type ReadyPipe = (OwnedFd, OwnedFd);
+
 fn launch_cmds(
     h: &Handler,
     plan: &LaunchPlan,
     cfg: &PartyConfig,
-) -> Result<Vec<std::process::Command>, Box<dyn std::error::Error>> {
+) -> Result<(Vec<std::process::Command>, Vec<ReadyPipe>), Box<dyn std::error::Error>> {
     let win = h.win();
     let exec = Path::new(&h.exec);
     let runtime = h.runtime.as_str();
@@ -205,6 +221,7 @@ fn launch_cmds(
     let mut cmds: Vec<Command> = (0..plan.instances.len())
         .map(|_| Command::new(gamescope))
         .collect();
+    let mut ready_pipes: Vec<ReadyPipe> = Vec::with_capacity(plan.instances.len());
 
     for (i, instance) in plan.instances.iter().enumerate() {
         let (width, height) = (instance.rect.w, instance.rect.h);
@@ -284,7 +301,14 @@ fn launch_cmds(
         }
 
         cmd.args(["--backend", "headless"]);
+        cmd.arg("--composite-cursor");
         cmd.args(["-r", &plan.displays[instance.display].refresh_rate.to_string()]);
+
+        // Readiness pipe: gamescope writes its display names here once its
+        // nested Wayland server is up, letting the worker connect the stream.
+        let (ready_read, ready_write) = nix::unistd::pipe()?;
+        cmd.args(["-R", &format!("/proc/self/fd/{}", ready_write.as_raw_fd())]);
+        ready_pipes.push((ready_read, ready_write));
 
         if cfg.kbm_support {
             let mut instance_has_keyboard = false;
@@ -466,7 +490,7 @@ fn launch_cmds(
         }
     }
 
-    Ok(cmds)
+    Ok((cmds, ready_pipes))
 }
 
 fn print_launch_cmds(cmds: &Vec<Command>) {

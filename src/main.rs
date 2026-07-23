@@ -8,6 +8,7 @@ mod paths;
 mod profiles;
 mod session;
 mod util;
+mod video;
 
 use crate::app::*;
 use crate::handler::Handler;
@@ -15,6 +16,7 @@ use crate::monitor::{get_monitors_errorless, get_x11_dpi_scale};
 use crate::paths::PATH_PARTY;
 use crate::profiles::remove_guest_profiles;
 use crate::util::*;
+use crate::video::egl::EglApi;
 
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().collect();
@@ -93,7 +95,9 @@ fn main() -> eframe::Result {
                 eframe::icon_data::from_png_bytes(&include_bytes!("../res/icon.png")[..])
                     .expect("Failed to load icon"),
             ),
+        renderer: eframe::Renderer::Glow,
         glow_options: eframe::egui_glow::GlowConfiguration {
+            vsync: false,
             api_preference: eframe::egui_glow::ApiPreference::PreferEgl,
             ..Default::default()
         },
@@ -109,11 +113,23 @@ fn main() -> eframe::Result {
             // This gives us image support:
             egui_extras::install_image_loaders(&cc.egui_ctx);
             cc.egui_ctx.set_zoom_factor(scale);
+
+            let gl = cc.gl.clone().expect("GL context invalid");
+            let get_proc_address = cc.get_proc_address.clone().expect("GL proc context invalid");
+
+            // Construct the shared EGL API from get_proc_address.
+            // All EGL symbols (core + extensions) are resolved through the
+            // same callback eframe itself uses to build its GL context.
+            let egl = std::sync::Arc::new(
+                EglApi::new(gl, &get_proc_address).expect("Failed to initialize EGL"),
+            );
+
             Ok(Box::<PartyApp>::new(PartyApp::new(
                 cc.egui_ctx.clone(),
                 monitors.clone(),
                 handler_lite,
                 fullscreen,
+                egl,
             )))
         }),
     )
