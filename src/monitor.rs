@@ -1,12 +1,13 @@
 use x11rb::connection::Connection;
 use x11rb::protocol::randr::ConnectionExt as _;
-
+use x11rb::protocol::randr::ModeFlag;
 
 #[derive(Clone)]
 pub struct Monitor {
     name: String,
     width: u32,
     height: u32,
+    refresh_rate: u32,
 }
 
 impl Monitor {
@@ -20,6 +21,10 @@ impl Monitor {
 
     pub fn height(&self) -> u32 {
         self.height
+    }
+
+    pub fn refresh_rate(&self) -> u32 {
+        self.refresh_rate
     }
 }
 
@@ -56,10 +61,29 @@ fn get_monitors_x11() -> Result<Vec<Monitor>, Box<dyn std::error::Error>> {
 
         let name = String::from_utf8_lossy(&info.name).to_string();
 
+        let mode_info = res.modes.iter().find(|m| m.id == crtc.mode);
+        let refresh_rate = match mode_info {
+            Some(m) if m.dot_clock > 0 && m.htotal > 0 && m.vtotal > 0 => {
+                let mut numerator = m.dot_clock as u64;
+                let mut denominator = m.htotal as u64 * m.vtotal as u64;
+
+                if m.mode_flags.contains(ModeFlag::INTERLACE) {
+                    numerator *= 2;
+                }
+                if m.mode_flags.contains(ModeFlag::DOUBLE_SCAN) {
+                    denominator *= 2;
+                }
+
+                ((numerator + denominator / 2) / denominator) as u32
+            }
+            _ => 60,
+        };
+
         let monitor = Monitor {
             name: name.clone(),
             width: crtc.width.into(),
             height: crtc.height.into(),
+            refresh_rate,
         };
 
         if *output == primary {
@@ -109,7 +133,7 @@ pub fn get_monitors_errorless() -> Vec<Monitor> {
 
     if monitors.len() == 0 { // Quick patch for those who have no x11 visable monitors, so we dont just panic.
         println!("[PARTYDECK] Failed to get monitors; using assumed 1920x1080");
-        monitors.push(Monitor {name: "Partydeck Virtual Monitor".to_string(), width: 1920, height: 1080});
+        monitors.push(Monitor {name: "Partydeck Virtual Monitor".to_string(), width: 1920, height: 1080, refresh_rate: 60});
     }
 
     monitors

@@ -21,6 +21,7 @@ pub struct DisplaySpec {
     pub name: String,
     pub width: u32,
     pub height: u32,
+    pub refresh_rate: u32,
 }
 
 pub struct InstanceSpec {
@@ -51,6 +52,7 @@ impl LaunchPlan {
                 name: monitor.name().to_string(),
                 width: monitor.width(),
                 height: monitor.height(),
+                refresh_rate: monitor.refresh_rate(),
             });
             for (instance, mut rect) in display.instances.iter().zip(windows) {
                 // Fix for games that crash below gamescope's minimum resolution.
@@ -282,6 +284,7 @@ fn launch_cmds(
         }
 
         cmd.args(["--backend", "headless"]);
+        cmd.args(["-r", &plan.displays[instance.display].refresh_rate.to_string()]);
 
         if cfg.kbm_support {
             let mut instance_has_keyboard = false;
