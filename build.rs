@@ -81,15 +81,6 @@ macro_rules! build_println {
     };
 }
 
-#[allow(dead_code)]
-fn apply_patches(deps_dir: &std::path::Path) {
-    let mut git_apply = std::process::Command::new("git");
-    git_apply.args(["apply", &deps_dir.join("deps.patch").to_string_lossy()]);
-    let _ = git_apply.spawn().map_err(|e| {
-        build_println!("Failed to git apply the patches we have for our deps, this is most likely not a real error: {:?} - {:?}", git_apply.get_program().to_string_lossy(), e);
-    });
-}
-
 fn main() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let deps_dir = root.join("deps/");
@@ -128,22 +119,46 @@ fn main() {
     }
 }
 
+/// Apply local fixes to the dependency checkouts before building them.
+/// Only runs when `deps/deps.patch` exists; a patch that no longer applies
+/// (e.g. already applied, or fixed upstream) is not fatal.
+#[cfg(feature = "build_gamescope")]
+fn apply_patches(deps_dir: &Path) {
+    let patch = deps_dir.join("deps.patch");
+    if !patch.exists() {
+        return;
+    }
+
+    match std::process::Command::new("git").arg("apply").arg(&patch).status() {
+        Ok(status) if status.success() => {
+            build_println!("Applied {}", patch.display());
+        }
+        Ok(_) => {
+            build_println!("git apply {} failed (possibly already applied); continuing.", patch.display());
+        }
+        Err(e) => {
+            build_println!("Failed to run git apply for {}: {e}; continuing.", patch.display());
+        }
+    }
+}
+
 #[cfg(feature = "build_gamescope")]
 fn build_gamescope(deps_dir: &Path, target_dir: &PathBuf) {
-    apply_patches(deps_dir); // Apply our own custom fixes for gamescope compilation
-    
     use std::process::Command;
+
+    apply_patches(deps_dir); // Apply our own custom fixes for gamescope compilation
 
     let gamescope_dir = deps_dir.join("gamescope");
     let build_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("gamescope-build-gcc");
 
-    if !build_dir.exists() && gamescope_dir.exists() {
+    if !build_dir.join("build.ninja").exists() {
         build_println!("Running meson setup command for gamescope");
         let status = Command::new("meson")
             .arg("setup")
             .arg(&build_dir)
             .arg("-Dinput_emulation=disabled")
             .arg("-Dbenchmark=disabled")
+            .arg("-Denable_tests=false")
             .arg("--auto-features=enabled")
             .env("CC", "gcc")
             .env("CXX", "g++")
