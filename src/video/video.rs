@@ -252,6 +252,7 @@ impl PipewireVideo {
         let callback = eframe::egui_glow::CallbackFn::new(move |info, painter| {
             let Ok(mut r) = renderer.lock() else { return; };
             let Ok(pipewire_stream) = pipewire_stream.read() else { return; };
+            if !pipewire_stream.streaming { return; }
             let gl = painter.gl();
             r.paint(gl, &info, rect, pipewire_stream);
         });

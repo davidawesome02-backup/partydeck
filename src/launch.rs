@@ -735,6 +735,7 @@ struct GamescopeWaylandState {
     has_data_to_send: bool,
 
     pub pipewire_node: Option<u32>,
+    pub latest_nested_size: Rect,
     pub latest_output_size: Rect,
 
     // Warning, can hardlock if used in callback! I dont like this arc, but I will need to figure out later.
@@ -799,9 +800,11 @@ impl Dispatch<GamescopeInput, ()> for GamescopeWaylandState {
             gamescope_input::Event::MousePosition { x, y } => {
                 // state.latest_mouse_potion = Some((x,y));
             }
-            gamescope_input::Event::OutputSize { width, height } => {
+            gamescope_input::Event::OutputSize { nestedWidth, nestedHeight,
+                                                 outputWidth, outputHeight } => {
                 // Lossy, maybe fix later, but who is using a near 32 bit int screen?
-                state.latest_output_size = Rect{ min: Pos2::ZERO, max: Pos2{x: width as f32, y: height as f32}};
+                state.latest_nested_size = Rect{ min: Pos2::ZERO, max: Pos2{x: nestedWidth as f32, y: nestedHeight as f32}};
+                state.latest_output_size = Rect{ min: Pos2::ZERO, max: Pos2{x: outputWidth as f32, y: outputHeight as f32}};
             }
         }
     }
@@ -822,6 +825,7 @@ impl GamescopeWaylandState {
             has_data_to_send: false,
 
             pipewire_node: None,
+            latest_nested_size: Rect::ZERO,
             latest_output_size: Rect::ZERO,
 
             event_queue: event_queue.clone(),
@@ -841,6 +845,14 @@ impl GamescopeWaylandState {
         locked_event_queue.roundtrip(&mut state).map_err(|e| format!("Second roundtrip failed: {e}"))?;
 
         Ok(state)
+    }
+
+    pub fn set_size(&mut self, nested: Vec2, output: Vec2) -> Result<(), String> {
+        let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
+        input_interface.set_output_size(nested.x as u32, nested.y as u32, output.x as u32, output.y as u32);
+        self.has_data_to_send = true;
+
+        Ok(())
     }
 
     pub fn get_size(&mut self) -> Result<(), String> {
@@ -877,7 +889,7 @@ impl GamescopeWaylandState {
 
     pub fn mouse_set(&mut self, pos: Vec2) -> Result<(), String> {
         let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
-        let translated_pos = self.latest_output_size.lerp_inside(pos);
+        let translated_pos = self.latest_nested_size.lerp_inside(pos);
         input_interface.mouse_warp(translated_pos.x as f64, translated_pos.y as f64);
 
         self.has_data_to_send = true;
@@ -888,7 +900,7 @@ impl GamescopeWaylandState {
         if delta == Vec2::ZERO { return Ok(()); }
 
         let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
-        let translated_delta = self.latest_output_size.lerp_inside(delta);
+        let translated_delta = self.latest_nested_size.lerp_inside(delta);
         input_interface.mouse_motion(translated_delta.x as f64, translated_delta.y as f64);
 
         self.has_data_to_send = true;
@@ -897,7 +909,7 @@ impl GamescopeWaylandState {
 
     pub fn mouse_scroll(&mut self, scroll: egui::Vec2) -> Result<(), String> {
         let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
-        input_interface.mouse_scroll((scroll.x*120.) as i32, (scroll.y*120.) as i32); // Not best rounding here but should be fine
+        input_interface.mouse_scroll((scroll.x*60.) as i32, (-scroll.y*60.) as i32); // Not best rounding here but should be fine
 
         self.has_data_to_send = true;
         Ok(())
@@ -907,7 +919,7 @@ impl GamescopeWaylandState {
         if self.has_data_to_send == false { return Ok(()); };
         let event_queue = self.event_queue.clone();
         let mut locked_event_queue = event_queue.lock().map_err(|e| format!("Failed to lock event_queue: {e}"))?;
-        locked_event_queue.roundtrip(self).map_err(|e| format!("Failed to process round trip: {e}"))?;
+        locked_event_queue.roundtrip(self).map_err(|e| format!("Failed to process round trip: {e}"))?; // May want to catch backendError / IO error for ignoring / marking as disconnected as: Failed to process round trip: Backend error: Io error: Broken pipe (os error 32)" is produced.
         
         self.has_data_to_send = false;
         Ok(())
@@ -952,6 +964,7 @@ impl GamescopeSession {
             .args(["-R", &format!("/proc/self/fd/{}",write_fd.as_raw_fd().to_string())])
             .args(["--composite-cursor", "--force-windows-fullscreen", "--nested-follow-window-scale", "1"])
             .args(["--backend", "headless"])
+            // .args(["-F", "fsr"]) // If we want to enable FSR, we can do that via gamescope controll wl interface
             .args(["--", "konsole"])
             .spawn()
             .map_err(|e| format!("Failed to create gamescope child: {e}"))?);
@@ -1045,7 +1058,20 @@ impl GamescopeSession {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, desired_size: egui::Vec2) -> Result<egui::Response, String> {
+
         let response = self.video_ui.ui(ui, desired_size);
+
+        if !(desired_size.x > 1. && desired_size.y > 1.) {
+            return Ok(response);
+        }
+
+        if self.child_proc.0.try_wait().map_err(|e| format!("Couldnt get child proc: {e}"))?.is_some() {return Ok(response);} // Game is dead.
+        
+        // self.wayland_state.set_size(desired_size, desired_size)?;
+        // self.wayland_state.set_size(desired_size*ui.zoom_factor(), desired_size*ui.zoom_factor()*0.75)?;
+        self.wayland_state.set_size(desired_size*ui.zoom_factor(), desired_size*ui.zoom_factor())?;
+        // self.wayland_state.set_size(desired_size*2., desired_size*2.)?;
+
 
         let current_pointer_state = response.ctx.input(|i| i.pointer.clone());
         
@@ -1125,7 +1151,6 @@ const SDL_GAMECONTROLLER_IGNORE_DEVICES: &str = "0x054c/0x0df2,0x054c/0x0df2,0x0
 // Those in comments are ones in hte phisical key winit enum that dont exist here. 
 pub fn egui_key_to_xkb(input_key: egui::Key) -> Option<u32> {
     use egui::Key;
-    println!("Key: {input_key:?}");
 
     // Not sure why these are translated..? egui shouldnt be translating these, so we just need to get the "unshifted" version of them.
     let input_key = match input_key {
@@ -1136,9 +1161,6 @@ pub fn egui_key_to_xkb(input_key: egui::Key) -> Option<u32> {
         Key::CloseCurlyBracket => Key::CloseBracket,
         Key::Colon => Key::Semicolon,
         Key::Questionmark => Key::Slash,
-        Key::Copy => Key::C,
-        Key::Paste => Key::P,
-        Key::Cut => Key::X,
 
         other => other
     };

@@ -304,7 +304,7 @@ impl eframe::App for PartyApp {
                     //     _ => avail,
                     // };
                     ui.vertical_centered(|ui| {
-                        temp_window_open_new_locked.0.ui(ui, size).unwrap();
+                        let _ = temp_window_open_new_locked.0.ui(ui, size).inspect_err(|e| eprintln!("Video UI error: {e}"));
                     });
                 });
             }
