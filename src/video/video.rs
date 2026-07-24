@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
-use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
+use std::sync::{Arc, Mutex, RwLock};
 
 use eframe::egui;
 use eframe::glow;
@@ -15,7 +15,7 @@ use pipewire as pw;
 use super::egl::{EglApi, EglError, EglImage};
 
 use crate::video::pipewire::PipewireCommand::ConnectVid;
-use crate::video::pipewire::{PipewireCommand, PipewireID, PipewireStream};
+use crate::video::pipewire::{DmaBufFrame, PipewireCommand, PipewireID, PipewireStream};
 
 /// Errors that can occur while constructing a [`PipewireVideo`].
 #[derive(Debug)]
@@ -55,6 +55,7 @@ struct Renderer {
     fbo: glow::Framebuffer,
     image: Option<EglImage>,
     size: (u32, u32),
+    last_seq: Option<u64>,
     fbo_complete: bool,
     logged_no_display: bool,
 }
@@ -87,13 +88,17 @@ impl Renderer {
             fbo,
             image: None,
             size: (0, 0),
+            last_seq: None,
             fbo_complete: false,
             logged_no_display: false,
         })
     }
 
     /// Import a new DMA-BUF frame, replacing the current image.
-    fn import(&mut self, gl: &glow::Context, desc: RwLockReadGuard<PipewireStream>) {
+    fn import(&mut self, gl: &glow::Context, frame: &DmaBufFrame) {
+        if self.last_seq == Some(frame.seq) {
+            return;
+        }
         let display = match self.egl.current_display() {
             Ok(d) => d,
             Err(_) => {
@@ -105,7 +110,7 @@ impl Renderer {
             }
         };
 
-        let new_image = match self.egl.create_dmabuf_image(display, &desc) {
+        let new_image = match self.egl.create_dmabuf_image(display, frame) {
             Ok(img) => img,
             Err(e) => {
                 eprintln!("egl: DMA-BUF import failed: {e}");
@@ -140,12 +145,13 @@ impl Renderer {
         }
 
         self.image = Some(new_image);
-        self.size = (desc.width, desc.height);
+        self.size = (frame.width, frame.height);
+        self.last_seq = Some(frame.seq);
     }
 
     /// Render into `rect`. Called from the glow paint callback.
-    fn paint(&mut self, gl: &glow::Context, info: &egui::PaintCallbackInfo, rect: egui::Rect, desc: RwLockReadGuard<PipewireStream>) {
-        self.import(gl, desc);
+    fn paint(&mut self, gl: &glow::Context, info: &egui::PaintCallbackInfo, rect: egui::Rect, frame: &DmaBufFrame) {
+        self.import(gl, frame);
 
         if self.image.is_none() || !self.fbo_complete {
             return;
@@ -207,11 +213,13 @@ impl PipewireVideo {
         target: PipewireID,
         sender: pw::channel::Sender<PipewireCommand>,
         streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<PipewireStream>>>>>,
+        ctx: &egui::Context,
+        viewport: egui::ViewportId,
     ) -> Result<Self, Error> {
         let renderer = Renderer::new(egl)?;
         let renderer = Arc::new(Mutex::new(renderer));
 
-        let _ = sender.send(ConnectVid(target));
+        let _ = sender.send(ConnectVid(target, ctx.clone(), viewport));
 
         Ok(PipewireVideo {
             renderer,
@@ -251,9 +259,14 @@ impl PipewireVideo {
         let renderer = self.renderer.clone();
         let callback = eframe::egui_glow::CallbackFn::new(move |info, painter| {
             let Ok(mut r) = renderer.lock() else { return; };
-            let Ok(pipewire_stream) = pipewire_stream.read() else { return; };
+            // Copy the frame out so the stream lock is released before GL work.
+            let frame = match pipewire_stream.read() {
+                Ok(stream) => stream.latest_frame,
+                Err(_) => return,
+            };
+            let Some(frame) = frame else { return; };
             let gl = painter.gl();
-            r.paint(gl, &info, rect, pipewire_stream);
+            r.paint(gl, &info, rect, &frame);
         });
 
         ui.painter().add(egui::PaintCallback {

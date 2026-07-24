@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::{Arc, RwLock}, thread::JoinHandle};
 
+use eframe::egui;
 use pipewire::{self as pw, context::ContextRc, core::CoreRc, main_loop::MainLoopRc, stream::{StreamListener, StreamRc}};
 use pw::spa;
 use spa::pod::Pod;
@@ -7,7 +8,7 @@ use spa::pod::Pod;
 pub type PipewireID = u32;
 
 pub enum PipewireCommand {
-    ConnectVid(PipewireID),
+    ConnectVid(PipewireID, egui::Context, egui::ViewportId),
     Disconnect(PipewireID),
     Terminate
 }
@@ -54,13 +55,13 @@ fn pipewire_thread_inner(streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<Pipe
     let listener_hashmap: RwLock<HashMap<PipewireID, (StreamListener<Arc<RwLock<PipewireStream>>>, StreamRc)>> = RwLock::new(HashMap::new());
 
     let _attached = receiver.attach(mainloop.loop_(), move |cmd| match cmd {
-        PipewireCommand::ConnectVid(id) => {
+        PipewireCommand::ConnectVid(id, ctx, viewport) => {
             println!("Connecting to pipewire stream: {id}");
             let Ok(mut streams_map) = streams.write() else {
                 eprintln!("Connect: Pipewire response stream map poisoned!");
                 return;
             };
-            match PipewireStream::new(id, loop_ref.clone(), context.clone(), core.clone()) {
+            match PipewireStream::new(id, ctx, viewport, loop_ref.clone(), context.clone(), core.clone()) {
                 Ok(new_pw_stream) => {
                     let resulting_stream = new_pw_stream;
                     streams_map.insert(id, resulting_stream.0);
@@ -118,15 +119,22 @@ fn pipewire_thread_inner(streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<Pipe
 }
 
 
+/// One imported DMA-BUF frame, as delivered by the process callback.
+#[derive(Clone, Copy)]
+pub struct DmaBufFrame {
+    pub seq: u64,
+    pub fd: i64,
+    pub width: u32,
+    pub height: u32,
+    pub offset: u32,
+    pub stride: i32,
+}
+
 pub struct PipewireStream {
     pub id: PipewireID,
     pub streaming: bool,
 
-    pub dmabuf_latest: i64,
-    pub height: u32,
-    pub width: u32,
-    pub offset: u32,
-    pub stride: i32,
+    pub latest_frame: Option<DmaBufFrame>,
 
     pub spa_format_latest: spa::param::video::VideoInfoRaw,
 }
@@ -134,6 +142,8 @@ pub struct PipewireStream {
 impl PipewireStream {
     fn new(
         id: PipewireID,
+        ctx: egui::Context,
+        viewport: egui::ViewportId,
         _mainloop: MainLoopRc,
         _context: ContextRc,
         core: CoreRc
@@ -148,15 +158,11 @@ impl PipewireStream {
         )?;
 
         let new_stream_metadata = Arc::new(RwLock::new(
-            PipewireStream { 
+            PipewireStream {
                 id,
                 streaming: false,
 
-                dmabuf_latest: -1,
-                height: 0,
-                width: 0,
-                offset: 0,
-                stride: 0,
+                latest_frame: None,
 
                 spa_format_latest: Default::default(),
             }
@@ -207,7 +213,7 @@ impl PipewireStream {
 
                 
             })
-            .process(|stream: &pipewire::stream::Stream, stream_metadata| {
+            .process(move |stream: &pipewire::stream::Stream, stream_metadata| {
                 // Drain to the newest available buffer; reassigning `newest` drops
                 // (and thereby re-queues) the previous one.
                 let mut newest = None;
@@ -251,11 +257,18 @@ impl PipewireStream {
                 let mut write_pw_stream = stream_metadata.write().unwrap();
 
                 let size = write_pw_stream.spa_format_latest.size();
-                write_pw_stream.height = size.height;
-                write_pw_stream.width  = size.width;
-                write_pw_stream.dmabuf_latest = fd;
-                write_pw_stream.stride = stride;
-                write_pw_stream.offset = offset;
+                let seq = write_pw_stream.latest_frame.map_or(0, |frame| frame.seq) + 1;
+                write_pw_stream.latest_frame = Some(DmaBufFrame {
+                    seq,
+                    fd,
+                    width: size.width,
+                    height: size.height,
+                    offset,
+                    stride,
+                });
+                drop(write_pw_stream);
+
+                ctx.request_repaint_once_for(viewport);
             })
             .register()?;
 

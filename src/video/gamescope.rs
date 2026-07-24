@@ -312,8 +312,10 @@ impl InstanceStreamView {
         connection: GamescopeConnection,
         sender: pw::channel::Sender<PipewireCommand>,
         streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<PipewireStream>>>>>,
+        ctx: &egui::Context,
+        viewport: egui::ViewportId,
     ) -> Result<Self, String> {
-        let video = PipewireVideo::new(egl, connection.pipewire_node, sender, streams)
+        let video = PipewireVideo::new(egl, connection.pipewire_node, sender, streams, ctx, viewport)
             .map_err(|e| format!("Failed to create video: {e}"))?;
 
         Ok(Self {

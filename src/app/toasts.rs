@@ -140,6 +140,10 @@ impl Toasts {
                 ui.spacing_mut().item_spacing.y = 10.0;
                 Self::show_stack(&mut items, ui, 320.0, None);
             });
+
+        if let Some(at) = items.iter().filter_map(|toast| toast.expires_at).min() {
+            ctx.request_repaint_after(at.saturating_duration_since(now));
+        }
     }
 
     pub fn show_for_instance(&self, ctx: &egui::Context, id: InstanceId, rect: egui::Rect) {
@@ -160,6 +164,15 @@ impl Toasts {
                 let max_width = (rect.width() - 16.0).min(320.0);
                 Self::show_stack(&mut items, ui, max_width, Some(id));
             });
+
+        if let Some(at) = items
+            .iter()
+            .filter(|toast| toast.target == Some(id) && toast.alive(now))
+            .filter_map(|toast| toast.expires_at)
+            .min()
+        {
+            ctx.request_repaint_after(at.saturating_duration_since(now));
+        }
     }
 
     fn show_stack(

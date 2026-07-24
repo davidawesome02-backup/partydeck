@@ -28,7 +28,7 @@ impl SessionScreen {
     /// Wrap connections handed over by the launch worker in stream views.
     /// Runs mid-frame on the UI thread, where the GL context is current for
     /// the video texture creation.
-    fn adopt_pending_streams(&mut self, state: &mut AppState) {
+    fn adopt_pending_streams(&mut self, state: &mut AppState, ctx: &egui::Context) {
         if state.pending_streams.is_empty() {
             return;
         }
@@ -44,11 +44,19 @@ impl SessionScreen {
 
         let mut views = self.views.lock().unwrap();
         for (id, connection) in state.pending_streams.drain() {
+            let display_idx = self
+                .plan
+                .instances()
+                .iter()
+                .find(|spec| spec.id == id)
+                .map_or(0, |spec| spec.display);
             match InstanceStreamView::new(
                 &state.egl,
                 connection,
                 pipewire.channel.clone(),
                 pipewire.streams.clone(),
+                ctx,
+                session_viewport_id(display_idx),
             ) {
                 Ok(view) => {
                     views.insert(id, view);
@@ -65,7 +73,7 @@ impl Screen for SessionScreen {
     }
 
     fn ui(&mut self, state: &mut AppState, ui: &mut egui::Ui) {
-        self.adopt_pending_streams(state);
+        self.adopt_pending_streams(state, ui.ctx());
 
         display_ui(ui, &self.plan, 0, &state.toasts, &self.views);
 
@@ -74,7 +82,7 @@ impl Screen for SessionScreen {
             let toasts = state.toasts.clone();
             let views = Arc::clone(&self.views);
             ui.ctx().show_viewport_deferred(
-                egui::ViewportId::from_hash_of(("session-display", idx)),
+                session_viewport_id(idx),
                 egui::ViewportBuilder::default()
                     .with_title(format!("PartyDeck — {}", display.name))
                     .with_monitor_name(display.name.clone())
@@ -86,6 +94,16 @@ impl Screen for SessionScreen {
                 },
             );
         }
+    }
+}
+
+/// The egui viewport a session display's tiles render in, used both to spawn
+/// the extra display viewports and as the repaint target for stream frames.
+fn session_viewport_id(display_idx: usize) -> egui::ViewportId {
+    if display_idx == 0 {
+        egui::ViewportId::ROOT
+    } else {
+        egui::ViewportId::from_hash_of(("session-display", display_idx))
     }
 }
 

@@ -98,10 +98,6 @@ impl eframe::App for PartyApp {
                 self.pinned_monitor = pin;
             }
         }
-
-        if ctx.input(|input| input.focused) {
-            ctx.request_repaint_after(std::time::Duration::from_millis(33)); // 30 fps
-        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

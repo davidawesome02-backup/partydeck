@@ -86,6 +86,10 @@ fn main() -> eframe::Result {
         false => 1.3,
     };
 
+    let wayland = ["WAYLAND_DISPLAY", "WAYLAND_SOCKET"]
+        .iter()
+        .any(|var| std::env::var(var).is_ok_and(|value| !value.is_empty()));
+
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1080.0, 540.0])
@@ -97,7 +101,7 @@ fn main() -> eframe::Result {
             ),
         renderer: eframe::Renderer::Glow,
         glow_options: eframe::egui_glow::GlowConfiguration {
-            vsync: false,
+            vsync: !wayland,
             api_preference: eframe::egui_glow::ApiPreference::PreferEgl,
             ..Default::default()
         },

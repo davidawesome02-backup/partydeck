@@ -1,10 +1,10 @@
 use std::ffi::{c_void, CStr};
 use std::fmt;
-use std::sync::{Arc, RwLockReadGuard};
+use std::sync::Arc;
 
 use eframe::glow;
 
-use crate::video::pipewire::PipewireStream;
+use crate::video::pipewire::DmaBufFrame;
 
 #[allow(dead_code)]
 mod sys {
@@ -157,21 +157,21 @@ impl EglApi {
     pub fn create_dmabuf_image(
         &self,
         display: EglDisplay,
-        desc: &RwLockReadGuard<PipewireStream>,
+        frame: &DmaBufFrame,
     ) -> Result<EglImage, EglError> {
         let attribs: [i32; 13] = [
             sys::WIDTH,
-            desc.width as i32,
+            frame.width as i32,
             sys::HEIGHT,
-            desc.height as i32,
+            frame.height as i32,
             sys::LINUX_DRM_FOURCC_EXT,
             DRM_FORMAT_XRGB8888 as i32,
             sys::DMA_BUF_PLANE0_FD_EXT,
-            desc.dmabuf_latest as i32,
+            frame.fd as i32,
             sys::DMA_BUF_PLANE0_OFFSET_EXT,
-            desc.offset as i32,
+            frame.offset as i32,
             sys::DMA_BUF_PLANE0_PITCH_EXT,
-            desc.stride,
+            frame.stride,
             sys::NONE,
         ];
 
