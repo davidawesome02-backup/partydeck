@@ -121,10 +121,17 @@ impl Screen for EditHandlerScreen {
             ui.label("Executable:");
             ui.add_enabled(false, egui::TextEdit::singleline(&mut h.exec));
             if ui.button("🗁").clicked() {
-                if let Ok(base_path) = h.get_game_rootpath()
-                    && let Ok(path) = file_dialog_relative(&PathBuf::from(base_path))
-                {
-                    h.exec = path.to_string_lossy().to_string();
+                match h.get_game_rootpath() {
+                    Ok(base_path) => {
+                        if let Ok(path) = file_dialog_relative(&PathBuf::from(base_path)) {
+                            h.exec = path.to_string_lossy().to_string();
+                        }
+                    }
+                    Err(e) => state.toasts.push(
+                        Severity::Error,
+                        "Can't browse for executable",
+                        format!("{e} — set the game root folder or a Steam app first."),
+                    ),
                 }
             }
         });
