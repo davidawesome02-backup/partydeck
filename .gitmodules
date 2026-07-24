@@ -4,4 +4,4 @@
 [submodule "deps/egui"]
   path = deps/egui
   url = https://github.com/partydeck/egui
-  branch = partydeck-prerelease-patches
+  branch = partydeck-patches
