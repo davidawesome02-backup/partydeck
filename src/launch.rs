@@ -1,8 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 
-use eframe::egui::Color32;
-
 use crate::app::{PadFilterType, PartyConfig};
 use crate::handler::*;
 use crate::input::*;
@@ -31,7 +29,6 @@ pub struct InstanceSpec {
     devices: Vec<DeviceHash>,
     pub display: usize,
     pub rect: WindowPosition,
-    pub color: Color32,
 }
 
 impl LaunchPlan {
@@ -68,7 +65,6 @@ impl LaunchPlan {
                     devices: instance.devices.clone(),
                     display: display_idx,
                     rect,
-                    color: instance.color,
                 });
             }
         }

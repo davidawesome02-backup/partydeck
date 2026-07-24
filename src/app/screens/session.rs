@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use eframe::egui::{self, Align2, Color32, FontId, Rect, Stroke, vec2};
+use eframe::egui::{self, Color32, Rect, vec2};
 
 use crate::app::screens::Screen;
 use crate::app::state::AppState;
@@ -54,21 +54,10 @@ fn display_ui(ui: &mut egui::Ui, plan: &LaunchPlan, display_idx: usize, toasts: 
     let scale_x = screen.width() / display.width as f32;
     let scale_y = screen.height() / display.height as f32;
 
-    // Placeholder tiles
     for spec in plan.instances().iter().filter(|spec| spec.display == display_idx) {
         let tile = Rect::from_min_size(
             screen.min + vec2(spec.rect.x as f32 * scale_x, spec.rect.y as f32 * scale_y),
             vec2(spec.rect.w as f32 * scale_x, spec.rect.h as f32 * scale_y),
-        );
-
-        painter.rect_stroke(tile, 2.0, Stroke::new(2.0, spec.color), egui::StrokeKind::Inside);
-
-        painter.text(
-            tile.center(),
-            Align2::CENTER_CENTER,
-            &spec.profname,
-            FontId::proportional(16.0),
-            Color32::GRAY,
         );
 
         toasts.show_for_instance(ui.ctx(), spec.id, tile);
