@@ -23,10 +23,6 @@ pub struct PartyConfig {
     #[serde(default = "default_true")]
     pub gamescope_fix_lowres: bool,
     #[serde(default)]
-    pub gamescope_force_grab_cursor: bool,
-    #[serde(default = "default_true")]
-    pub kbm_support: bool,
-    #[serde(default)]
     pub proton_version: String,
     #[serde(default = "default_true")]
     pub proton_separate_pfxs: bool,
@@ -48,8 +44,6 @@ impl Default for PartyConfig {
     fn default() -> Self {
         PartyConfig {
             gamescope_fix_lowres: true,
-            gamescope_force_grab_cursor: false,
-            kbm_support: true,
             proton_version: "".to_string(),
             proton_separate_pfxs: true,
             proton_wow64: true,

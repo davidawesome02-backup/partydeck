@@ -10,7 +10,7 @@ use crate::input::{DeviceHash, DeviceInfo, DeviceType};
 use crate::launch::LaunchPlan;
 use crate::layout::LayoutKind;
 use crate::profiles::{next_temp_name, scan_profiles};
-use crate::session::{Display, InstanceId};
+use crate::session::{Display, InstanceAction, InstanceId};
 
 pub struct InstancesScreen {
     edit_modal: Option<InstanceId>,
@@ -18,11 +18,6 @@ pub struct InstancesScreen {
     show_bottom_panel: bool,
 }
 
-enum InstanceAction {
-    Edit(InstanceId),
-    Remove(InstanceId),
-    Swap(InstanceId, InstanceId),
-}
 
 struct DeviceRow {
     hash: DeviceHash,
@@ -138,11 +133,13 @@ impl InstancesScreen {
         let cfg = state.options.clone();
         let _ = save_cfg(&cfg);
         let devices: Vec<DeviceInfo> = state.input_devices.iter().map(|device| device.info()).collect();
+        // TODO REPLACE!
         let plan = Arc::new(LaunchPlan::build(&state.session, &state.monitors, devices, &cfg));
 
         state.active_session = Some(plan.clone());
         state.pending_route = Some(Route::Session(plan.clone()));
-        spawn_launch_worker(&state.events, handler, plan, cfg);
+        // TODO REPLACE!
+        // spawn_launch_worker(&state.events, handler, plan, cfg);
     }
 
     fn open_new_instance(&mut self, state: &mut AppState) {
@@ -161,7 +158,7 @@ impl InstancesScreen {
                 .inner_margin(2.0)
                 .corner_radius(2)
                 .show(ui, |ui| {
-                    let monitor = &state.monitors[state.session.selected_display().monitor];
+                    let monitor = &state.monitors[state.session.selected_display().monitor_idx];
                     let target_res = (monitor.width(), monitor.height());
                     let aspect_ratio = target_res.0 as f32 / target_res.1 as f32;
                     let height = (ui.available_width() / aspect_ratio).min(ui.available_height());
@@ -169,117 +166,30 @@ impl InstancesScreen {
                     ui.set_height(height);
                     ui.set_width(width);
 
-                    self.preview_canvas(state, ui, width, height, target_res);
+                    let display: &mut Display = state.session.selected_display();
+                    if display.is_empty() {
+                        let mut remove_display = false;
+                        ui.vertical_centered(|ui| {
+                            ui.add_space((ui.available_height() / 2.0 - 15.0).max(0.0));
+                            ui.label("No instances, click \"New instance\" to add.");
+                            if state.session.displays.len() > 1 && ui.button("Remove display").clicked() {
+                                remove_display = true;
+                            }
+                        });
+                        if remove_display {
+                            self.remove_selected_display(state);
+                        }
+                    } else {
+                        let action = display.editor_ui(ui, width, height, target_res);
+                        self.apply_instance_action(state, action);
+                    }
                 });
         });
     }
 
-    fn preview_canvas(
-        &mut self,
-        state: &mut AppState,
-        ui: &mut Ui,
-        width: f32,
-        height: f32,
-        target_res: (u32, u32),
-    ) {
-        if state.session.selected_display().is_empty() {
-            let mut remove_display = false;
-            ui.vertical_centered(|ui| {
-                ui.add_space((ui.available_height() / 2.0 - 15.0).max(0.0));
-                ui.label("No instances, click \"New instance\" to add.");
-                if state.session.displays.len() > 1 && ui.button("Remove display").clicked() {
-                    remove_display = true;
-                }
-            });
-            if remove_display {
-                self.remove_selected_display(state);
-            }
-            return;
-        }
-
-        let top_left_cursor = ui.cursor().left_top().to_vec2();
-        let layout = state.session.selected_display().window_positions(target_res.0, target_res.1);
-        let mut action: Option<InstanceAction> = None;
-        for (instance_idx, window) in layout.iter().enumerate() {
-            let instance = &state.session.selected_display().instances[instance_idx];
-            let id = instance.id;
-            let profname = instance.profname.clone();
-            let color = instance.color;
-            let tile_rect = egui::Rect::from_min_size(
-                egui::pos2(
-                    window.x as f32 * width / target_res.0 as f32,
-                    window.y as f32 * height / target_res.1 as f32,
-                ) + top_left_cursor,
-                egui::vec2(
-                    window.w as f32 * width / target_res.0 as f32,
-                    window.h as f32 * height / target_res.1 as f32,
-                ),
-            );
-
-            ui.scope_builder(
-                egui::UiBuilder::new()
-                    .id_salt(id)
-                    .max_rect(tile_rect)
-                    .sense(egui::Sense::hover())
-                    .layout(egui::Layout::top_down(egui::Align::LEFT)),
-                |ui| {
-                    ui.set_width(tile_rect.width());
-                    ui.set_height(tile_rect.height());
-
-                    let frame = egui::Frame::default()
-                        .corner_radius(2)
-                        .stroke(egui::Stroke::new(2.0, Color32::GRAY));
-
-                    let dropped_payload = ui.dnd_drop_zone::<InstanceId, ()>(frame, |ui| {
-                        let dnd_id = ui.make_persistent_id("setup_instance");
-
-                        dnd_drag_source(ui, dnd_id, id, |ui| {
-                            egui::Frame::NONE
-                                .fill(Color32::from_gray(20))
-                                .corner_radius(2)
-                                .stroke(egui::Stroke::new(2.0, color))
-                                .show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.set_height(ui.available_height());
-                                    ui.horizontal(|ui| {
-                                        ui.style_mut().spacing.item_spacing.x = 3.0;
-
-                                        let move_handle = ui.button("\u{01F5D7}").on_hover_text("Move");
-                                        ui.interact(move_handle.rect, dnd_id, egui::Sense::drag())
-                                            .on_hover_cursor(egui::CursorIcon::Grab);
-
-                                        if ui.button("\u{01F5D1}").on_hover_text("Remove").clicked() {
-                                            action = Some(InstanceAction::Remove(id));
-                                        }
-
-                                        if ui.button("✏").on_hover_text("Edit").clicked() {
-                                            action = Some(InstanceAction::Edit(id));
-                                        }
-
-                                        ui.add(egui::Label::new(profname).truncate());
-                                    });
-                                });
-                        });
-                        ui.set_width(ui.available_width());
-                        ui.set_height(ui.available_height());
-                    });
-
-                    if let Some(dropped) = dropped_payload.1 {
-                        if *dropped != id {
-                            action = Some(InstanceAction::Swap(*dropped, id));
-                        }
-                    }
-                },
-            );
-        }
-
-        if let Some(action) = action {
-            self.apply_instance_action(state, action);
-        }
-    }
-
     fn apply_instance_action(&mut self, state: &mut AppState, action: InstanceAction) {
         match action {
+            InstanceAction::None => {},
             InstanceAction::Edit(id) => self.edit_modal = Some(id),
             InstanceAction::Remove(id) => {
                 state.session.remove_instance(id);
@@ -314,7 +224,7 @@ impl InstancesScreen {
         if state.monitors.len() > 1 {
             ui.horizontal(|ui| {
                 ui.label("🖵");
-                let mut monitor = state.session.selected_display().monitor;
+                let mut monitor = state.session.selected_display().monitor_idx;
                 egui::ComboBox::from_id_salt("setup_display_monitor")
                     .selected_text(state.monitors[monitor].name())
                     .show_ui(ui, |ui| {
@@ -322,7 +232,7 @@ impl InstancesScreen {
                             ui.selectable_value(&mut monitor, i, m.name());
                         }
                     });
-                state.session.selected_display_mut().monitor = monitor;
+                state.session.selected_display_mut().monitor_idx = monitor;
             });
         }
 
@@ -344,7 +254,6 @@ impl InstancesScreen {
             .cloned()
             .collect();
         let allow_multiple = state.options.allow_multiple_instances_on_same_device;
-        let kbm_support = state.options.kbm_support;
         let device_rows = self.device_rows(state, id);
 
         egui::Modal::new(ui.make_persistent_id("setup_instance_edit_modal")).show(ui.ctx(), |ui| {
@@ -392,10 +301,8 @@ impl InstancesScreen {
                 let mut checked = checked_before;
                 let blocked = !checked_before
                     && !device_assignable(
-                        row.device_type,
                         row.enabled,
                         row.already_used,
-                        kbm_support,
                         allow_multiple,
                     );
 
@@ -436,15 +343,12 @@ impl InstancesScreen {
 }
 
 fn device_assignable(
-    device_type: DeviceType,
     enabled: bool,
     used_by_other: bool,
-    kbm_support: bool,
     allow_multiple: bool,
 ) -> bool {
-    let type_ok = device_type == DeviceType::Gamepad || kbm_support;
-    let not_duplicate = !used_by_other || (device_type == DeviceType::Gamepad && allow_multiple);
-    enabled && type_ok && not_duplicate
+    let not_duplicate = !used_by_other || allow_multiple;
+    enabled && not_duplicate
 }
 
 fn device_text_color(row: &DeviceRow, blocked: bool) -> Color32 {
@@ -473,32 +377,5 @@ fn device_hover_text(row: &DeviceRow, blocked: bool) -> &'static str {
         (true, true, false) => "Available\nInput pressed",
         (true, false, true) => "Already used",
         (true, true, true) => "Already used\nInput pressed",
-    }
-}
-
-fn dnd_drag_source<R>(
-    ui: &mut egui::Ui,
-    id: egui::Id,
-    payload: InstanceId,
-    add_contents: impl FnOnce(&mut egui::Ui) -> R,
-) -> egui::InnerResponse<R> {
-    let is_being_dragged = ui.ctx().is_being_dragged(id);
-
-    if is_being_dragged {
-        egui::DragAndDrop::set_payload(ui.ctx(), payload);
-
-        let layer_id = egui::LayerId::new(egui::Order::Tooltip, id);
-        let egui::InnerResponse { inner, response } =
-            ui.scope_builder(egui::UiBuilder::new().layer_id(layer_id), add_contents);
-
-        if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
-            let delta = pointer_pos - response.rect.left_top() - egui::vec2(12.0, 12.0);
-            ui.ctx()
-                .transform_layer_shapes(layer_id, egui::emath::TSTransform::from_translation(delta));
-        }
-
-        egui::InnerResponse::new(inner, response)
-    } else {
-        ui.scope(add_contents)
     }
 }

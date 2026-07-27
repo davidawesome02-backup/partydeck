@@ -46,7 +46,7 @@ mod gamescope_input_wrapper {
 }
 use gamescope_input_wrapper::gamescope_input::{self, GamescopeInput};
 
-struct GamescopeWaylandState {
+pub struct GamescopeWaylandState {
     pipewire_interface: Option<GamescopePipewire>,
     input_interface: Option<GamescopeInput>,
     has_data_to_send: bool,
@@ -124,7 +124,7 @@ impl Dispatch<GamescopeInput, ()> for GamescopeWaylandState {
 }
 
 impl GamescopeWaylandState {
-    pub fn new(path: PathBuf) -> Result<Self, String> {
+    pub fn new(path: &PathBuf) -> Result<Self, String> {
         // Connect to display
         let unix_socket = std::os::unix::net::UnixStream::connect(path).map_err(|e| format!("Failed to connect to wayland socket: {e}"))?;
 
@@ -231,76 +231,12 @@ impl GamescopeWaylandState {
     }
 }
 
-/// A live client connection to one gamescope instance's Wayland socket.
-/// Built on the launch worker thread; handed to the UI thread to be wrapped
-/// in an [`InstanceStreamView`].
-pub struct GamescopeConnection {
-    wayland_state: GamescopeWaylandState,
-    pub pipewire_node: PipewireID,
-}
-
-impl GamescopeConnection {
-    /// Wait on gamescope's `-R` readiness pipe, then connect to the Wayland
-    /// display it announces.
-    pub fn from_readiness_pipe(read_fd: OwnedFd) -> Result<Self, String> {
-        let wayland_display = Self::fd_get_wayland_display(read_fd)?;
-
-        let xdg_runtime_dir = std::env::var("XDG_RUNTIME_DIR").map_err(|e| format!("XDG env var not set: {e}"))?; // Follow as I think gamescope does.
-        let wayland_socket_path = std::path::PathBuf::from(xdg_runtime_dir).join(wayland_display);
-
-        let mut wayland_state = GamescopeWaylandState::new(wayland_socket_path)?;
-
-        wayland_state.get_size()?;
-        wayland_state.round_trip()?;
-
-        let pipewire_node = wayland_state.pipewire_node.ok_or("Unable to get pipewire interface!")?;
-
-        Ok(Self { wayland_state, pipewire_node })
-    }
-
-    fn fd_get_wayland_display(read_fd: OwnedFd) -> Result<String, String> {
-        let read_fd_clone = read_fd.try_clone().map_err(|e| format!("Fd clone failed: {e}"))?;
-        let mut pollfds = [
-            PollFd::new(read_fd_clone.as_fd(), PollFlags::POLLIN),
-        ];
-
-        // 2 second timeout for gamescope to start
-        let timeout = PollTimeout::try_from(2000).map_err(|e| format!("Timeout creation failed: {e}"))?;
-
-        let file_owned = std::fs::File::from(read_fd);
-
-        // Will return 1 as the kernel sends poll updates as a set of single byte update.
-        let poll_bytes_avalib = poll(&mut pollfds, timeout).map_err(|e| format!("Poll failed: {e}"))?;
-
-        if poll_bytes_avalib == 0 {
-            return Err("Poll failed to read any data... Gamescope may be slow or bugged.".to_owned());
-        }
-
-        // Buffer in kernel should be full despite poll_bytes_avalib==1, so use bufreader as a wrapper for reading (avoids blocking, but reads all avalib)
-        let mut reader = std::io::BufReader::new(file_owned);
-        let readyfd_buf = reader.fill_buf().map_err(|e| format!("Failed to fill buffer from ready fd: {e}"))?;
-
-        let readyfd_str_buf = String::from_utf8_lossy(readyfd_buf);
-
-        // Format should be ":1 gamescope-0\n" or dprintf( readyPipeFD, "%s %s\n", root_ctx->xwayland_server->get_nested_display_name(), wlserver_get_wl_display_name() );
-        let split_readyfd_buf = readyfd_str_buf
-            .split_whitespace()
-            .collect::<Vec<_>>();
-
-        let wl_display = split_readyfd_buf
-            .get(1)
-            .ok_or_else(|| format!("Readyfd buffer format invalid: {:?}", readyfd_str_buf))?;
-
-        Ok(wl_display.to_string())
-    }
-}
-
 /// Displays one instance's PipeWire stream and forwards hovered keyboard and
 /// mouse input into its gamescope. Must be created on the UI thread while the
 /// GL context is current.
 pub struct InstanceStreamView {
     video: PipewireVideo,
-    connection: GamescopeConnection,
+    wayland_state: GamescopeWaylandState,
 
     last_keys_down: HashSet<egui::Key>,
     last_pointer_pos: Option<Vec2>,
@@ -309,18 +245,19 @@ pub struct InstanceStreamView {
 impl InstanceStreamView {
     pub fn new(
         egl: &Arc<EglApi>,
-        connection: GamescopeConnection,
+        wayland_state: GamescopeWaylandState,
         sender: pw::channel::Sender<PipewireCommand>,
         streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<PipewireStream>>>>>,
         ctx: &egui::Context,
         viewport: egui::ViewportId,
     ) -> Result<Self, String> {
-        let video = PipewireVideo::new(egl, connection.pipewire_node, sender, streams, ctx, viewport)
+        let Some(pipewire_node) = wayland_state.pipewire_node else { return Err("Failed to get pw node".to_owned()); };
+        let video = PipewireVideo::new(egl, pipewire_node, sender, streams, ctx, viewport)
             .map_err(|e| format!("Failed to create video: {e}"))?;
 
         Ok(Self {
             video,
-            connection,
+            wayland_state,
             last_keys_down: HashSet::new(),
             last_pointer_pos: None,
         })
@@ -329,13 +266,13 @@ impl InstanceStreamView {
     fn update_keys_down(&mut self, current_keys_down: &HashSet<egui::Key>) -> Result<(), String> {
         for key_down in current_keys_down.difference(&self.last_keys_down) {
             if let Some(translated_key) = egui_key_to_xkb(*key_down) {
-                self.connection.wayland_state.send_key(translated_key, true)?;
+                self.wayland_state.send_key(translated_key, true)?;
             }
         }
 
         for key_up in self.last_keys_down.difference(current_keys_down) {
             if let Some(translated_key) = egui_key_to_xkb(*key_up) {
-                self.connection.wayland_state.send_key(translated_key, false)?;
+                self.wayland_state.send_key(translated_key, false)?;
             }
         }
 
@@ -363,12 +300,12 @@ impl InstanceStreamView {
             (response.rect.right_bottom() - response.rect.left_top());
 
         // Get updated size doesnt need to be called every frame, but ¯\_( *-* )_/¯
-        self.connection.wayland_state.get_size()?;
+        self.wayland_state.get_size()?;
 
         // Keys may be inacurate due to egui processing, ui.input(|ui| ui.raw.events) is closer to raw I think
         if self.last_pointer_pos.is_none() && let Some(pointer_pos) = current_pointer_pos {
             // Force pos
-            self.connection.wayland_state.mouse_set(pointer_pos)?;
+            self.wayland_state.mouse_set(pointer_pos)?;
 
             self.update_keys_down(&current_keys_down)?;
         }
@@ -379,7 +316,7 @@ impl InstanceStreamView {
         }
 
         if current_pointer_pos.is_some() && self.last_pointer_pos.is_some() {
-            self.connection.wayland_state.mouse_move(current_pointer_movement)?;
+            self.wayland_state.mouse_move(current_pointer_movement)?;
 
             self.update_keys_down(&current_keys_down)?;
         }
@@ -388,7 +325,7 @@ impl InstanceStreamView {
         // into every instance on screen.
         if current_pointer_pos.is_some() {
             // I have no idea how to do non-smooth scroll.
-            self.connection.wayland_state.mouse_scroll(ui.input(|i| i.smooth_scroll_delta()))?;
+            self.wayland_state.mouse_scroll(ui.input(|i| i.smooth_scroll_delta()))?;
 
             /* input-event-codes.h
             #define BTN_LEFT		0x110
@@ -400,13 +337,13 @@ impl InstanceStreamView {
                 (egui::PointerButton::Secondary, 0x111),
                 (egui::PointerButton::Middle, 0x112),
             ] {
-                if current_pointer_state.button_pressed(button) { self.connection.wayland_state.mouse_button(code, true)?; }
-                if current_pointer_state.button_released(button) { self.connection.wayland_state.mouse_button(code, false)?; }
+                if current_pointer_state.button_pressed(button) { self.wayland_state.mouse_button(code, true)?; }
+                if current_pointer_state.button_released(button) { self.wayland_state.mouse_button(code, false)?; }
             }
         }
 
         self.last_pointer_pos = current_pointer_pos;
-        self.connection.wayland_state.round_trip()?; // Only runs if we actually updated anything.
+        self.wayland_state.round_trip()?; // Only runs if we actually updated anything.
 
         Ok(response)
     }

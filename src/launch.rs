@@ -47,7 +47,7 @@ impl LaunchPlan {
             if display.is_empty() {
                 continue;
             }
-            let monitor = &monitors[display.monitor];
+            let monitor = &monitors[display.monitor_idx];
             let windows = display.window_positions(monitor.width(), monitor.height());
             let display_idx = displays.len();
             displays.push(DisplaySpec {
@@ -91,6 +91,7 @@ pub fn run_launch(
     on_spawn: impl Fn(&InstanceSpec),
     on_stream: impl Fn(&InstanceSpec, Result<GamescopeConnection, String>),
 ) -> Result<(), String> {
+    return Ok(());
     setup_profiles(h, plan).map_err(|e| format!("Failed setting up profiles: {e}"))?;
 
     if h.is_saved_handler() && !cfg.disable_mount_gamedirs && cfg.profile_unique_dirs {
@@ -188,6 +189,8 @@ fn launch_cmds(
     plan: &LaunchPlan,
     cfg: &PartyConfig,
 ) -> Result<(Vec<std::process::Command>, Vec<ReadyPipe>), Box<dyn std::error::Error>> {
+    return Ok((Vec::new(), Vec::new()));
+    /* 
     let win = h.win();
     let exec = Path::new(&h.exec);
     let runtime = h.runtime.as_str();
@@ -491,6 +494,7 @@ fn launch_cmds(
     }
 
     Ok((cmds, ready_pipes))
+    */
 }
 
 fn print_launch_cmds(cmds: &Vec<Command>) {

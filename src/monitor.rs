@@ -2,7 +2,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::randr::ModeFlag;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Monitor {
     name: String,
     width: u32,

@@ -24,7 +24,7 @@ steamlocate = "2.0.1"
 zip = { version = "5.1.1", features = ["deflate", "deflate64"], default-features = false }
 pathsearch = "0.2.0"
 pipewire = "0.10"
-nix = { version = "0.30", default-features = false, features = ["poll", "fs"] }
+nix = { version = "0.30", default-features = false, features = ["poll", "fs", "ioctl"] }
 wayland-client = "0.31"
 wayland-scanner = "0.31"
 wayland-backend = "0.3"

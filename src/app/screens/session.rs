@@ -29,6 +29,8 @@ impl SessionScreen {
     /// Runs mid-frame on the UI thread, where the GL context is current for
     /// the video texture creation.
     fn adopt_pending_streams(&mut self, state: &mut AppState, ctx: &egui::Context) {
+        return;
+        /* 
         if state.pending_streams.is_empty() {
             return;
         }
@@ -64,6 +66,7 @@ impl SessionScreen {
                 Err(err) => state.toasts.push_for(id, Severity::Error, "No video stream", err),
             }
         }
+        */
     }
 }
 
@@ -84,7 +87,7 @@ impl Screen for SessionScreen {
             ui.ctx().show_viewport_deferred(
                 session_viewport_id(idx),
                 egui::ViewportBuilder::default()
-                    .with_title(format!("PartyDeck — {}", display.name))
+                    .with_title(format!("PartyDeck - {}", display.name))
                     .with_monitor_name(display.name.clone())
                     .with_fullscreen(true),
                 move |ui, _class| {

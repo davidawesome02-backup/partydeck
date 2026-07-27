@@ -115,7 +115,7 @@ impl AppState {
         self.monitors = get_monitors_errorless();
         let max = self.monitors.len().saturating_sub(1);
         for display in &mut self.session.displays {
-            display.monitor = display.monitor.min(max);
+            display.monitor_idx = display.monitor_idx.min(max);
         }
     }
 

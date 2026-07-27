@@ -189,18 +189,6 @@ impl SettingsScreen {
             "Automatically fix low resolution instances",
         );
         self.hint(gamescope_lowres_fix_check.hovered(), "Many games have graphical problems or even crash when running at resolutions below 600p. If this is enabled, any instances below 600p will automatically be resized before launching.");
-
-        let kbm_support_check = ui.checkbox(
-            &mut state.options.kbm_support,
-            "Enable keyboard and mouse support through custom Gamescope",
-        );
-        self.hint(kbm_support_check.hovered(), "Runs a custom Gamescope build with support for holding keyboards and mice. If you want to use your own Gamescope installation, uncheck this.");
-
-        let gamescope_force_grab_cursor_check = ui.checkbox(
-            &mut state.options.gamescope_force_grab_cursor,
-            "Force grab cursor for Gamescope",
-        );
-        self.hint(gamescope_force_grab_cursor_check.hovered(), "Sets the \"--force-grab-cursor\" flag in Gamescope. This keeps the cursor within the Gamescope window. If unsure, leave this unchecked.");
     }
 
     fn hint(&mut self, hovered: bool, text: &'static str) {
