@@ -11,7 +11,7 @@ use crate::paths::*;
 use crate::profiles::{create_profile, create_profile_gamesave};
 use crate::session::{InstanceId, Session};
 use crate::util::*;
-use crate::video::gamescope::GamescopeConnection;
+// use crate::video::gamescope::GamescopeConnection;
 
 pub struct LaunchPlan {
     instances: Vec<InstanceSpec>,
@@ -89,9 +89,10 @@ pub fn run_launch(
     plan: &LaunchPlan,
     cfg: &PartyConfig,
     on_spawn: impl Fn(&InstanceSpec),
-    on_stream: impl Fn(&InstanceSpec, Result<GamescopeConnection, String>),
+    on_stream: impl Fn(&InstanceSpec, Result<(), String>), //() was GamescopeConnection
 ) -> Result<(), String> {
     return Ok(());
+    /* 
     setup_profiles(h, plan).map_err(|e| format!("Failed setting up profiles: {e}"))?;
 
     if h.is_saved_handler() && !cfg.disable_mount_gamedirs && cfg.profile_unique_dirs {
@@ -157,6 +158,7 @@ pub fn run_launch(
     }
 
     Ok(())
+    */
 }
 
 fn setup_profiles(h: &Handler, plan: &LaunchPlan) -> Result<(), Box<dyn std::error::Error>> {

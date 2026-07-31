@@ -72,7 +72,7 @@ impl std::fmt::Display for InstanceLaunchedStatus {
     }
 }
 
-struct InstanceSpecificHandler {
+pub struct InstanceSpecificHandler {
     pub pause_between_starts: Option<f64>
 }
 
@@ -404,6 +404,7 @@ impl Display {
         action
     }
 
+    #[allow(unused)]
     pub fn start_display(&self, monitor: Monitor, ui: &mut egui::Ui, next_timeout: &mut Instant) {
         let new_launch_data = DisplayLaunched {
             monitor: monitor,
@@ -423,6 +424,7 @@ impl Display {
         // *next_timeout+=Duration::from_secs(5);
     }
 
+    #[allow(unused)]
     pub fn container_ui(&self, arc_self: Arc<std::sync::Mutex<Self>>, ui: &mut egui::Ui) {
         let Some(ref launch_data) = self.launch_data else {return;};
         let monitor = &launch_data.monitor;
@@ -431,7 +433,7 @@ impl Display {
             egui::ViewportBuilder::default()
                 .with_title(format!("PartyDeck - {}", monitor.name()))
                 .with_monitor_name(monitor.name())
-                .with_fullscreen(true),
+                .with_fullscreen(launch_data.fullscreen),
             move |ui, _class| {
                 egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
                     arc_self.lock().unwrap().display_ui(ui); // TODO fix.

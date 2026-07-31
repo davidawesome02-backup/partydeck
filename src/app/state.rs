@@ -11,7 +11,6 @@ use crate::launch::LaunchPlan;
 use crate::monitor::{Monitor, get_monitors_errorless};
 use crate::session::{InstanceId, Session};
 use crate::video::egl::EglApi;
-use crate::video::gamescope::GamescopeConnection;
 use crate::video::pipewire::PipewireInstance;
 
 pub struct AppState {
@@ -32,10 +31,11 @@ pub struct AppState {
 
     pub egl: Arc<EglApi>,
     pub pipewire: Option<PipewireInstance>,
+
+}
     /// Gamescope connections established by the launch worker, waiting for the
     /// session screen to wrap them in stream views on the GL thread.
-    pub pending_streams: HashMap<InstanceId, GamescopeConnection>,
-}
+    // pub pending_streams: HashMap<InstanceId, GamescopeConnection>,
 
 pub enum Mode {
     Full { handlers: Vec<Handler>, selected: usize },
@@ -103,7 +103,7 @@ impl AppState {
             active_session: None,
             egl,
             pipewire,
-            pending_streams: HashMap::new(),
+            // pending_streams: HashMap::new(),
         }
     }
 

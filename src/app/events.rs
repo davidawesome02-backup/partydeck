@@ -12,7 +12,7 @@ use crate::launch::{LaunchPlan, run_launch};
 use crate::profiles::remove_guest_profiles;
 use crate::session::InstanceId;
 use crate::util::{clear_tmp, remove_trash};
-use crate::video::gamescope::GamescopeConnection;
+// use crate::video::gamescope::GamescopeConnection;
 
 /// Status feedback from background threads to the UI.
 pub enum AppEvent {
@@ -20,7 +20,7 @@ pub enum AppEvent {
     Toast(Severity, String, String, Option<InstanceId>),
     /// The launch worker connected to an instance's gamescope; the session
     /// screen picks this up to display its video stream.
-    InstanceStreamReady(InstanceId, GamescopeConnection),
+    // InstanceStreamReady(InstanceId), // GamescopeConnection
     LaunchFinished,
 }
 
@@ -38,13 +38,13 @@ impl AppEvent {
                 Some(id) => state.toasts.push_for(id, severity, title, body),
                 None => state.toasts.push(severity, title, body),
             },
-            AppEvent::InstanceStreamReady(id, connection) => {
-                state.pending_streams.insert(id, connection);
-            }
+            // AppEvent::InstanceStreamReady(id, connection) => {
+            //     state.pending_streams.insert(id, connection);
+            // }
             AppEvent::LaunchFinished => {
                 state.active_session = None;
                 state.pending_route = Some(Route::Instances);
-                state.pending_streams.clear();
+                // state.pending_streams.clear();
                 state.toasts.release_targets();
             }
         }
@@ -91,7 +91,7 @@ pub fn spawn_launch_worker(
             },
             |spec, connection| match connection {
                 Ok(connection) => {
-                    events.send(AppEvent::InstanceStreamReady(spec.id, connection))
+                    // events.send(AppEvent::InstanceStreamReady(spec.id, connection))
                 }
                 Err(err) => events.send(AppEvent::Toast(
                     Severity::Error,
