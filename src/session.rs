@@ -443,7 +443,24 @@ impl Display {
     }
 
     fn display_ui(&self, ui: &mut egui::Ui) {
-        
+        let top_left_cursor = ui.cursor().left_top().to_vec2();
+        let layout = self.window_positions(target_res.0, target_res.1);
+        let mut action: InstanceAction = InstanceAction::None;
+        for (instance_idx, window) in layout.iter().enumerate() {
+            let instance = &mut self.instances[instance_idx];
+            let tile_rect = egui::Rect::from_min_size(
+                egui::pos2(
+                    window.x as f32 * width / target_res.0 as f32,
+                    window.y as f32 * height / target_res.1 as f32,
+                ) + top_left_cursor,
+                egui::vec2(
+                    window.w as f32 * width / target_res.0 as f32,
+                    window.h as f32 * height / target_res.1 as f32,
+                ),
+            );
+
+            instance.running_ui(ui, tile_rect);
+        }
     }
 }
 
