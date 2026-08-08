@@ -16,7 +16,6 @@ use crate::util::*;
 pub struct LaunchPlan {
     instances: Vec<InstanceSpec>,
     displays: Vec<DisplaySpec>,
-    devices: Vec<DeviceInfo>,
 }
 
 pub struct DisplaySpec {
@@ -29,51 +28,50 @@ pub struct DisplaySpec {
 pub struct InstanceSpec {
     pub id: InstanceId,
     pub profname: String,
-    devices: Vec<DeviceHash>,
     pub display: usize,
     pub rect: WindowPosition,
 }
 
 impl LaunchPlan {
-    pub fn build(
-        session: &Session,
-        monitors: &[Monitor],
-        devices: Vec<DeviceInfo>,
-        cfg: &PartyConfig,
-    ) -> Self {
-        let mut instances = Vec::new();
-        let mut displays = Vec::new();
-        for display in &session.displays {
-            if display.is_empty() {
-                continue;
-            }
-            let monitor = &monitors[display.monitor_idx];
-            let windows = display.window_positions(monitor.width(), monitor.height());
-            let display_idx = displays.len();
-            displays.push(DisplaySpec {
-                name: monitor.name().to_string(),
-                width: monitor.width(),
-                height: monitor.height(),
-                refresh_rate: monitor.refresh_rate(),
-            });
-            for (instance, mut rect) in display.instances.iter().zip(windows) {
-                // Fix for games that crash below gamescope's minimum resolution.
-                if cfg.gamescope_fix_lowres && rect.h < 600 {
-                    let ratio = rect.w as f32 / rect.h as f32;
-                    rect.h = 600;
-                    rect.w = (rect.h as f32 * ratio) as u32;
-                }
-                instances.push(InstanceSpec {
-                    id: instance.id,
-                    profname: instance.profname.clone(),
-                    devices: instance.devices.clone(),
-                    display: display_idx,
-                    rect,
-                });
-            }
-        }
-        Self { instances, displays, devices }
-    }
+    // pub fn build(
+    //     session: &Session,
+    //     monitors: &[Monitor],
+    //     devices: Vec<DeviceInfo>,
+    //     cfg: &PartyConfig,
+    // ) -> Self {
+    //     let mut instances = Vec::new();
+    //     let mut displays = Vec::new();
+    //     for display in &session.displays {
+    //         if display.is_empty() {
+    //             continue;
+    //         }
+    //         let monitor = &monitors[display.monitor_idx];
+    //         let windows = display.window_positions(monitor.width(), monitor.height());
+    //         let display_idx = displays.len();
+    //         displays.push(DisplaySpec {
+    //             name: monitor.name().to_string(),
+    //             width: monitor.width(),
+    //             height: monitor.height(),
+    //             refresh_rate: monitor.refresh_rate(),
+    //         });
+    //         for (instance, mut rect) in display.instances.iter().zip(windows) {
+    //             // Fix for games that crash below gamescope's minimum resolution.
+    //             if cfg.gamescope_fix_lowres && rect.h < 600 {
+    //                 let ratio = rect.w as f32 / rect.h as f32;
+    //                 rect.h = 600;
+    //                 rect.w = (rect.h as f32 * ratio) as u32;
+    //             }
+    //             instances.push(InstanceSpec {
+    //                 id: instance.id,
+    //                 profname: instance.profname.clone(),
+    //                 devices: instance.devices.clone(),
+    //                 display: display_idx,
+    //                 rect,
+    //             });
+    //         }
+    //     }
+    //     Self { instances, displays, devices }
+    // }
 
     pub fn instances(&self) -> &[InstanceSpec] {
         &self.instances

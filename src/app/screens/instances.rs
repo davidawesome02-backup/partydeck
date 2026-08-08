@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use eframe::egui::{self, Color32, RichText, Ui};
+use eframe::egui::{self, Color32, RichText, Ui, ViewportId};
 
 use crate::app::config::save_cfg;
 use crate::app::screens::{Panels, Route, Screen};
@@ -291,40 +291,61 @@ impl InstancesScreen {
 
 
             // TODO REPLACE TEMP CODE!!!!
-            let others_leases = state.input_state.leases().lock().unwrap().iter().filter(|lease| 
-                !instance.devices.iter().any(|my_lease| Arc::ptr_eq(&my_lease.inner(), lease))
-            ).collect::<Vec>();
+            // state.input_state.devices().
 
 
-            for row in state.input_state.devices().lock().unwrap().iter_mut() {
-                // row.1.
-                let used_by_others = others_leases.iter().any(|lease| lease.device_path.lock().unwrap() == Some(row.0));
-                let used_by_me = instance.devices.iter().any(|lease| lease.inner().device_path.lock().unwrap() == Some(row.0));
-                
-                
-                // instance.devices
-                // let checked_before = instance.has_device(row.hash);
-                // let mut checked = checked_before;
-                // let blocked = !checked_before
-                //     && !device_assignable(
-                //         row.enabled,
-                //         row.already_used,
-                //         allow_multiple,
-                //     );
+            // let others_leases = state.input_state.leases().lock().unwrap().iter().filter(|lease| 
+            //     !instance.devices.iter().any(|my_lease| Arc::ptr_eq(&my_lease.inner(), lease))
+            // ).collect::<Vec>();
 
-                // let dev_text =
-                //     RichText::new(&row.label).small().color(device_text_color(row, blocked));
-                // let response = ui
-                //     .add_enabled(!blocked, egui::Checkbox::new(&mut checked, dev_text))
-                //     .on_hover_text(device_hover_text(row, blocked));
 
-                // if response.changed() {
-                //     match (checked, checked_before) {
-                //         (true, false) => instance.devices.push(row.hash),
-                //         (false, true) => instance.devices.retain(|device| *device != row.hash),
-                //         _ => {}
-                //     }
-                // }
+            for device_arc in state.input_state.devices().iter() {
+
+                let mut device = device_arc.lock().unwrap();
+                let is_held = device.has_button_held();
+                let (used_by_others, used_by_me, shared_device_lease_id) = if let Some(shared_lease_lock) = &device.lease {
+                    let shared_lease = shared_lease_lock.lock().unwrap();
+
+                    let used_by_me = shared_lease.users_info.keys().any(|user| {
+                        instance.devices.iter().any(|my_lease| {
+                            my_lease.lease_id() == *user
+                        })
+                    });
+
+                    let used_by_others = shared_lease.users_info.keys().any(|user| {
+                        !instance.devices.iter().any(|my_lease| {
+                            my_lease.lease_id() == *user
+                        })
+                    });
+
+                    (used_by_others, used_by_me, Some(shared_lease.id))
+                } else {
+                    (false, false, None)
+                };
+
+                let is_enabled = device.enabled(&state.options.pad_filter_type) && (!used_by_others || state.options.allow_multiple_instances_on_same_device);
+
+
+                let mut checked = used_by_me;
+                let checked_before = checked;
+
+                let dev_text =
+                    RichText::new(&device.label()).small().color(device_text_color(is_enabled, is_held, used_by_me));
+
+                let response = ui
+                    .add_enabled(is_enabled, egui::Checkbox::new(&mut checked, dev_text))
+                    .on_hover_text(device_hover_text(is_enabled, is_held, used_by_me));
+
+                if response.changed() {
+                    match (checked, checked_before) {
+                        (true, false) => instance.devices.push(state.input_state.new_dev_lease_from_dev(&mut device, ViewportId::ROOT, false)),
+                        (false, true) => instance.devices.retain(|device| {
+                            // Shouldnt be possible for it to be none here.
+                            shared_device_lease_id.is_none() || Some(device.shared_lease_id()) != shared_device_lease_id
+                        }),
+                        _ => {}
+                    }
+                }
             }
         });
     }
@@ -340,11 +361,8 @@ fn device_assignable(
     enabled && not_duplicate
 }
 
-fn device_text_color(row: &DeviceRow, blocked: bool) -> Color32 {
-    if blocked {
-        return Color32::DARK_GRAY;
-    }
-    match (row.enabled, row.pressed, row.already_used) {
+fn device_text_color(enabled: bool, pressed: bool, already_used: bool) -> Color32 {
+    match (enabled, pressed, already_used) {
         (false, _, false) => Color32::RED,
         (false, _, true) => Color32::LIGHT_RED,
         (true, false, false) => Color32::GRAY,
@@ -354,12 +372,12 @@ fn device_text_color(row: &DeviceRow, blocked: bool) -> Color32 {
     }
 }
 
-fn device_hover_text(row: &DeviceRow, blocked: bool) -> &'static str {
-    if blocked {
-        return "Unavailable for this instance";
-    }
+fn device_hover_text(enabled: bool, pressed: bool, already_used: bool) -> &'static str {
+    // if blocked {
+    //     return "Unavailable for this instance";
+    // }
 
-    match (row.enabled, row.pressed, row.already_used) {
+    match (enabled, pressed, already_used) {
         (false, _, false) => "Disabled",
         (false, _, true) => "Disabled\nAlready used",
         (true, false, false) => "Available",

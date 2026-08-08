@@ -804,9 +804,11 @@ use std::{
     }, thread::{self, JoinHandle}, time::Duration,
 };
 
-use evdev::{Device, InputEvent, InputId};
+use evdev::{AbsoluteAxisCode, Device, EventSummary, InputEvent, InputId, KeyCode};
 use nix::{poll::{PollFd, PollFlags, PollTimeout, poll}, unistd::dup};
 use eframe::egui;
+
+use crate::app::PadFilterType;
 
 const POLL_TIMEOUT_MS: i32 = 5000;
 
@@ -814,7 +816,41 @@ type SharedLeaseId = u64;
 type LeaseId = u64;
 type DeviceHash = u64;
 
-fn compute_device_hash(unique: Option<&str>, input_id: &str, name: Option<&str>) -> DeviceHash {
+
+
+
+
+#[derive(Clone, PartialEq, Copy)]
+pub enum DeviceType {
+    Gamepad,
+    Keyboard,
+    Mouse,
+    Other,
+}
+
+#[derive(Clone)]
+pub enum PadButton {
+    Left,
+    Right,
+    Up,
+    Down,
+    ABtn,
+    BBtn,
+    XBtn,
+    YBtn,
+    StartBtn,
+    SelectBtn,
+
+    AKey,
+    RKey,
+    XKey,
+    ZKey,
+
+    RightClick,
+}
+
+
+fn compute_device_hash(unique: String, input_id: InputId, name: String) -> DeviceHash {
     use std::collections::hash_map::DefaultHasher;
     let mut hasher = DefaultHasher::new();
     (unique, input_id, name).hash(&mut hasher);
@@ -822,8 +858,18 @@ fn compute_device_hash(unique: Option<&str>, input_id: &str, name: Option<&str>)
 }
 
 fn compute_device_hash_dev(dev: &mut Device) -> DeviceHash {
-    let input_id_s = format!("{:?}", dev.input_id());
-    compute_device_hash(dev.unique_name(), &input_id_s, dev.name())
+    compute_device_hash(
+        dev.unique_name().unwrap_or("UNKNOWN").to_string(), 
+        dev.input_id(), 
+        dev.name().unwrap_or("UNKNOWN").to_string()
+    )
+}
+fn compute_device_hash_lease(lease: &SharedLease) -> DeviceHash {
+    compute_device_hash(
+        lease.dev_unique_name.clone(),
+        lease.dev_input_id.clone(),
+        lease.dev_name.clone(),
+    )
 }
 
 // ---------------------- SharedLease -----------------
@@ -883,10 +929,10 @@ impl SharedLease {
     }
 
     /// Called by the input thread when device events arrive; append events for each user and request repaint.
-    pub fn on_input(&mut self, events: Vec<InputEvent>, ctx: &egui::Context) {
+    pub fn on_input(&mut self, events: &Vec<InputEvent>, ctx: &egui::Context) {
         if events.is_empty() { return; }
         for (_, (viewport, q, _)) in self.users_info.iter_mut() {
-            q.extend(events.iter().cloned());
+            q.extend(events.clone());
             ctx.request_repaint_once_for(*viewport);
         }
     }
@@ -914,6 +960,10 @@ pub struct InternalDevice {
     /// optional bound shared lease
     pub lease: Option<Arc<Mutex<SharedLease>>>,
     pub grabbed: bool,
+
+
+    has_button_held: bool,
+    latest_gui_pad: Option<PadButton>,
 }
 
 impl InternalDevice {
@@ -924,6 +974,8 @@ impl InternalDevice {
             device: Arc::new(Mutex::new(dev)),
             lease: None,
             grabbed: false,
+            has_button_held: false,
+            latest_gui_pad: None,
         }
     }
 
@@ -954,14 +1006,142 @@ impl InternalDevice {
                 if !events.is_empty() {
                     if let Some(lease_arc) = &self.lease {
                         let mut lease = lease_arc.lock().unwrap();
-                        lease.on_input(events, ctx);
+                        lease.on_input(&events, ctx);
                     }
+                    self.gui_poll(events);
                 }
                 Ok(())
             }
             Err(_) => Err(()),
         }
     }
+    
+
+    fn name(&self) -> String {
+        let dev = self.device.lock().unwrap();
+        dev.name().unwrap_or_else(|| "").to_string()
+    }
+    
+    fn device_type(&mut self) -> DeviceType {
+        let dev = self.device.lock().unwrap();
+        let device_type = match dev.supported_keys() {
+            Some(keys) => {
+                if keys.contains(KeyCode::BTN_SOUTH) {
+                    DeviceType::Gamepad
+                } else if keys.contains(KeyCode::BTN_LEFT) {
+                    DeviceType::Mouse
+                } else if keys.contains(KeyCode::KEY_SPACE) {
+                    DeviceType::Keyboard
+                } else {
+                    DeviceType::Other
+                }
+            }
+            None => DeviceType::Other,
+        };
+        device_type
+    }
+
+    fn emoji(&mut self) -> String {
+        match self.device_type() {
+            DeviceType::Gamepad => "🎮",
+            DeviceType::Keyboard => "🖮",
+            DeviceType::Mouse => "🖱",
+            DeviceType::Other => "",
+        }.to_string()
+    }
+
+    fn fancyname(&self) -> String {
+        let name = self.name();
+        let name_str = name.as_str();
+
+        let dev = self.device.lock().unwrap();
+
+        match dev.input_id().vendor() {
+            0x045e => "Xbox Controller",
+            0x054c => "PS Controller",
+            0x057e => "NT Pro Controller",
+            0x28de => "Steam Input",
+            _ => name_str,
+        }.to_string()
+    }
+
+    fn path(&self) -> &str {
+        self.path.to_str().unwrap_or_default()
+    }
+
+    pub fn label(&mut self) -> String {
+        let emoji = self.emoji();
+        let fancyname = self.fancyname();
+        let path_id = self.path().trim_start_matches("/dev/input/event");
+        format!(
+            "{} {} ({})",
+            emoji,
+            fancyname,
+            path_id
+        )
+    }
+    
+    pub fn enabled(&self, filter: &PadFilterType) -> bool {
+        let dev = self.device.lock().unwrap();
+        match filter {
+            PadFilterType::All => true,
+            PadFilterType::NoSteamInput => dev.input_id().vendor() != 0x28de,
+            PadFilterType::OnlySteamInput => dev.input_id().vendor() == 0x28de,
+        }
+    }
+
+    pub fn gui_poll(&mut self, events: Vec<InputEvent>) {
+        let mut btn: Option<PadButton> = None;
+
+        for event in events {
+            let summary = event.destructure();
+
+            match summary {
+                EventSummary::Key(_, _, 1) => {
+                    self.has_button_held = true;
+                }
+                EventSummary::Key(_, _, 0) => {
+                    self.has_button_held = false;
+                }
+                _ => {}
+            }
+
+            btn = match summary {
+                EventSummary::Key(_, KeyCode::BTN_SOUTH, 1) => Some(PadButton::ABtn),
+                EventSummary::Key(_, KeyCode::BTN_EAST, 1) => Some(PadButton::BBtn),
+                EventSummary::Key(_, KeyCode::BTN_NORTH, 1) => Some(PadButton::XBtn),
+                EventSummary::Key(_, KeyCode::BTN_WEST, 1) => Some(PadButton::YBtn),
+                EventSummary::Key(_, KeyCode::BTN_START, 1) => Some(PadButton::StartBtn),
+                EventSummary::Key(_, KeyCode::BTN_SELECT, 1) => Some(PadButton::SelectBtn),
+                EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_HAT0X, -1) => {
+                    Some(PadButton::Left)
+                }
+                EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_HAT0X, 1) => {
+                    Some(PadButton::Right)
+                }
+                EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_HAT0Y, -1) => {
+                    Some(PadButton::Up)
+                }
+                EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_HAT0Y, 1) => {
+                    Some(PadButton::Down)
+                }
+                //keyboard
+                EventSummary::Key(_, KeyCode::KEY_A, 1) => Some(PadButton::AKey),
+                EventSummary::Key(_, KeyCode::KEY_R, 1) => Some(PadButton::RKey),
+                EventSummary::Key(_, KeyCode::KEY_X, 1) => Some(PadButton::XKey),
+                EventSummary::Key(_, KeyCode::KEY_Z, 1) => Some(PadButton::ZKey),
+                //mouse
+                EventSummary::Key(_, KeyCode::BTN_RIGHT, 1) => Some(PadButton::RightClick),
+                _ => btn,
+            };
+        }
+
+        self.latest_gui_pad = btn;
+    }
+
+    pub fn has_button_held(&mut self) -> bool {return self.has_button_held;}
+
+    pub fn latest_gui_pad(&mut self) -> Option<PadButton> {return self.latest_gui_pad.clone();}
 }
 
 // ---------------------- Manager (InputStateInner) --------------------------
@@ -985,11 +1165,8 @@ impl InputStateInner {
 
     /// Try find an unused device that matches the shared lease's hash.
     fn find_matching_unused_device(&mut self, lease: &SharedLease) -> Option<Arc<Mutex<InternalDevice>>> {
-        let target_hash = compute_device_hash(
-            Some(&lease.dev_unique_name),
-            &format!("{:?}", lease.dev_input_id),
-            Some(&lease.dev_name),
-        );
+        let target_hash = compute_device_hash_lease(lease);
+
         self.devices.iter()
             .find(|dev_arc| {
                 if let Ok(dev_guard) = dev_arc.lock() {
@@ -1017,11 +1194,7 @@ impl InputStateInner {
         if let Some((idx, lease_arc)) = self.orphan_leases.iter().enumerate()
             .find(|(_, l)| {
                 if let Ok(lease) = l.lock() {
-                    let target_hash = compute_device_hash(
-                        Some(&lease.dev_unique_name),
-                        &format!("{:?}", lease.dev_input_id),
-                        Some(&lease.dev_name),
-                    );
+                    let target_hash = compute_device_hash_lease(&lease);
                     target_hash == hash
                 } else { false }
             })
@@ -1123,6 +1296,8 @@ impl InputStateInner {
             }
         }
 
+        thread::sleep_ms(10);
+
         Ok(())
     }
 }
@@ -1197,6 +1372,8 @@ impl InputState {
                 let monitor_fd = monitor.as_fd();
 
                 // Poll + dispatch (we lock inner inside)
+
+                // THIS IS THE LOCKING BUG DAVID TODO: FIX!
                 if let Ok(mut guard) = thread_inner.lock() {
                     let _ = guard.poll_and_dispatch(monitor_fd);
                     // fix orphans (in case new devices bound)
@@ -1278,6 +1455,42 @@ impl InputState {
         }
     }
 
+    pub fn new_dev_lease_from_dev(
+        &self,
+        dev: &mut InternalDevice,
+        viewport: egui::ViewportId,
+        grabbed: bool,
+    ) -> DevLease {
+        let lease_id = self.latest_lease_id.fetch_add(1, Ordering::SeqCst);
+
+        if let Some(lease) = &dev.lease {
+            let mut locked_shared_lease = lease.lock().unwrap();
+            locked_shared_lease.add_user(lease_id, viewport, grabbed);
+
+            return DevLease { manager: self.inner.clone(), shared_lease_id: locked_shared_lease.id, lease_id };
+        } else {
+            let mut inner = self.inner.lock().unwrap();
+
+            let new_shared_id = self.latest_shared_lease_id.fetch_add(1, Ordering::SeqCst);
+            
+            let device_locked = dev.device.lock().unwrap();
+
+            let sh_lease = SharedLease::new(
+                new_shared_id, 
+                device_locked.name().unwrap_or("UNKNOWN").to_string(), 
+                device_locked.input_id(), 
+                device_locked.unique_name().unwrap_or("UNKNOWN").to_string()
+            );
+            
+            let sh_lease_arc = Arc::new(Mutex::new(sh_lease));
+            inner.shared_leases.insert(new_shared_id, Arc::clone(&sh_lease_arc));
+
+            dev.lease = Some(sh_lease_arc);
+
+            return DevLease { manager: self.inner.clone(), shared_lease_id: new_shared_id, lease_id };
+        }
+    }
+
     pub fn fix_orphans(&self) {
         if let Ok(mut inner) = self.inner.lock() {
             inner.fix_orphans();
@@ -1304,7 +1517,7 @@ impl Drop for InputState {
 
 pub struct DevLease {
     manager: Arc<Mutex<InputStateInner>>, // strong Arc as requested (no shim)
-    shared_lease_id: SharedLeaseId,
+    shared_lease_id: SharedLeaseId, // Todo maybe just include an arc instead of the ID as we already are making the arc.
     lease_id: LeaseId,
 }
 
@@ -1332,6 +1545,13 @@ impl DevLease {
             return lease_arc.lock().unwrap().pop_events_for(self.lease_id, max);
         }
         Vec::new()
+    }
+
+    pub fn lease_id(&self) -> LeaseId {
+        return self.lease_id;
+    }
+    pub fn shared_lease_id(&self) -> SharedLeaseId {
+        return self.shared_lease_id;
     }
 }
 
