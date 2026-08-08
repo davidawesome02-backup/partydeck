@@ -38,10 +38,6 @@ pub fn top_panel(state: &mut AppState, tab: Option<NavTab>, ui: &mut Ui) {
             state.pending_route = Some(Route::Profiles);
         }
 
-        if ui.button("🎮 🔄").clicked() {
-            state.rescan_input_devices();
-        }
-
         if ui.button("🖵 🔄").clicked() {
             state.rescan_monitors();
         }
@@ -176,18 +172,19 @@ impl LeftPanel {
     }
 }
 
-pub fn right_panel(state: &AppState, ui: &mut Ui) {
+pub fn right_panel(state: &mut AppState, ui: &mut Ui) {
     ui.add_space(6.0);
 
     ui.heading("Devices");
     ui.separator();
 
-    for pad in state.input_devices.iter() {
-        let mut dev_text = RichText::new(pad.label()).small();
+    for dev in state.input_state.devices().iter_mut() {
+        
+        let mut dev_text = RichText::new(dev.1.label()).small();
 
-        if !pad.enabled() {
+        if !dev.1.enabled(&state.options.pad_filter_type) {
             dev_text = dev_text.weak();
-        } else if pad.has_button_held() {
+        } else if dev.1.has_button_held() {
             dev_text = dev_text.strong();
         }
 

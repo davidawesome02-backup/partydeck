@@ -51,7 +51,6 @@ impl Screen for SettingsScreen {
                 }
                 if ui.button("Restore Defaults").clicked() {
                     state.options = PartyConfig::default();
-                    state.rescan_input_devices();
                 }
             });
             ui.separator();
@@ -127,10 +126,6 @@ impl SettingsScreen {
 
             let radios = r1 | r2 | r3;
             self.hint(filter_label.hovered() || radios.hovered(), "DEFAULT: No Steam Input\n\nSelect which controllers to filter out. If you use Steam Input to remap controllers, you may want to select \"Only Steam Input\", but be warned that this option is experimental and is known to break certain Proton games.");
-
-            if radios.clicked() {
-                state.rescan_input_devices();
-            }
         });
 
         let profile_unique_dirs_check = ui.checkbox(

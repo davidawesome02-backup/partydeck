@@ -8,7 +8,7 @@ use std::sync::{Arc, RwLock, Mutex};
 use eframe::egui::{self, Color32};
 
 use crate::handler::Handler;
-use crate::input::DeviceHash;
+use crate::input::DeviceLease;
 use crate::layout::{Layout, WindowPosition};
 use crate::monitor::Monitor;
 use crate::profiles::next_temp_name;
@@ -42,7 +42,7 @@ pub struct InstanceLaunched {
     pub egl: Arc<EglApi>,
     pub pw_sender: pw::channel::Sender<PipewireCommand>,
     pub pw_streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<PipewireStream>>>>>,
-    pub ctx: egui::Context, 
+    pub ctx: egui::Context,
     pub viewport_id: egui::ViewportId,
 }
 
@@ -65,7 +65,7 @@ impl std::fmt::Display for InstanceLaunchedStatus {
             Self::WaitingFD => "Waiting for gamescope to respond",
             Self::Failed => "Failed to start",
             Self::Exited => "Exited",
-        
+
             Self::Ready => "Ready waiting for frames!",
         };
         write!(f, "{}", status_str)
@@ -78,7 +78,7 @@ pub struct InstanceSpecificHandler {
 
 pub struct Instance {
     pub id: InstanceId,
-    pub devices: Vec<DeviceHash>,
+    pub devices: Vec<DeviceLease>,
     pub profname: String,
     pub color: Color32,
     pub handler: InstanceSpecificHandler,
@@ -101,12 +101,8 @@ fn bytes_available(fd: RawFd) -> nix::Result<i32> {
 
 
 impl Instance {
-    pub fn has_device(&self, hash: DeviceHash) -> bool {
-        self.devices.contains(&hash)
-    }
-
     pub fn edit_ui(&mut self, ui: &mut egui::Ui, tile_rect: egui::Rect) -> InstanceAction {
-        let mut action: InstanceAction = InstanceAction::None; 
+        let mut action: InstanceAction = InstanceAction::None;
         ui.scope_builder(
             egui::UiBuilder::new()
                 .id_salt(self.id)
@@ -169,7 +165,7 @@ impl Instance {
     pub fn start_instance(&mut self, next_timeout: &mut Instant, upper_launch_data: &DisplayLaunched) {
         if self.launch_data.is_some() {return;}
 
-        
+
         self.launch_data = Some(InstanceLaunched {
             last_error_dont_retry: None,
             start_instant: next_timeout.clone(),
@@ -207,7 +203,7 @@ impl Instance {
                 }
 
                 // TODO REPLACE WITH REAL DRAW CALLS!
-                ui.centered_and_justified(|ui| ui.label("READY!!")); 
+                ui.centered_and_justified(|ui| ui.label("READY!!"));
 
         });
     }
@@ -240,7 +236,7 @@ impl Instance {
         let Some(ref mut launch_data) = self.launch_data else {return InstanceLaunchedStatus::NotStarted;};
 
         let Some(ref mut launch_proc) = launch_data.gamescope_proc else {return InstanceLaunchedStatus::Failed;};
-        
+
         if !matches!(launch_proc.0.try_wait(), Ok(None)) {
             launch_data.last_error_dont_retry = Some(InstanceLaunchedStatus::Exited);
             return InstanceLaunchedStatus::Exited;
@@ -253,7 +249,7 @@ impl Instance {
                 return InstanceLaunchedStatus::Failed;
             }
 
-            
+
 
             let Ok(bytes_avalib) = bytes_available(launch_proc.1.as_raw_fd()) else {
                 eprintln!("Byte length failed to request..?");
@@ -293,7 +289,7 @@ impl Instance {
                     return InstanceLaunchedStatus::Failed;
                 };
 
-            
+
 
             let Ok(xdg_runtime_dir) = std::env::var("XDG_RUNTIME_DIR") else {
                 launch_data.last_error_dont_retry = Some(InstanceLaunchedStatus::Failed);
@@ -315,7 +311,7 @@ impl Instance {
             }
 
 
-            let Ok(stream_view) = 
+            let Ok(stream_view) =
                 InstanceStreamView::new(&launch_data.egl.clone(), wayland_state, launch_data.pw_sender.clone(), launch_data.pw_streams.clone(), &launch_data.ctx, launch_data.viewport_id)
                 .inspect_err(|e| eprintln!("Failed to start instance view: {e}")) else {
                     launch_data.last_error_dont_retry = Some(InstanceLaunchedStatus::Failed);
@@ -357,7 +353,7 @@ pub struct DisplayLaunched {
     pub egl: Arc<EglApi>,
     pub pw_sender: pw::channel::Sender<PipewireCommand>,
     pub pw_streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<PipewireStream>>>>>,
-    pub ctx: egui::Context, 
+    pub ctx: egui::Context,
     pub viewport_id: egui::ViewportId,
     pub fullscreen: bool,
 }
@@ -420,7 +416,7 @@ impl Display {
 
         self.launch_data = Some(new_launch_data);
 
-        
+
         // *next_timeout+=Duration::from_secs(5);
     }
 
@@ -443,24 +439,24 @@ impl Display {
     }
 
     fn display_ui(&self, ui: &mut egui::Ui) {
-        let top_left_cursor = ui.cursor().left_top().to_vec2();
-        let layout = self.window_positions(target_res.0, target_res.1);
-        let mut action: InstanceAction = InstanceAction::None;
-        for (instance_idx, window) in layout.iter().enumerate() {
-            let instance = &mut self.instances[instance_idx];
-            let tile_rect = egui::Rect::from_min_size(
-                egui::pos2(
-                    window.x as f32 * width / target_res.0 as f32,
-                    window.y as f32 * height / target_res.1 as f32,
-                ) + top_left_cursor,
-                egui::vec2(
-                    window.w as f32 * width / target_res.0 as f32,
-                    window.h as f32 * height / target_res.1 as f32,
-                ),
-            );
+    //     let top_left_cursor = ui.cursor().left_top().to_vec2();
+    //     let layout = self.window_positions(target_res.0, target_res.1);
+    //     let mut action: InstanceAction = InstanceAction::None;
+    //     for (instance_idx, window) in layout.iter().enumerate() {
+    //         let instance = &mut self.instances[instance_idx];
+    //         let tile_rect = egui::Rect::from_min_size(
+    //             egui::pos2(
+    //                 window.x as f32 * width / target_res.0 as f32,
+    //                 window.y as f32 * height / target_res.1 as f32,
+    //             ) + top_left_cursor,
+    //             egui::vec2(
+    //                 window.w as f32 * width / target_res.0 as f32,
+    //                 window.h as f32 * height / target_res.1 as f32,
+    //             ),
+    //         );
 
-            instance.running_ui(ui, tile_rect);
-        }
+    //         instance.running_ui(ui, tile_rect);
+    //     }
     }
 }
 
@@ -501,11 +497,6 @@ impl Session {
         &mut self.displays[self.selected]
     }
 
-    pub fn device_used_by_other(&self, hash: DeviceHash, exclude: InstanceId) -> bool {
-        self.all_instances()
-            .any(|instance| instance.id != exclude && instance.has_device(hash))
-    }
-
     pub fn add_instance(&mut self) -> InstanceId {
         let profname = next_temp_name(&self.used_profile_names(None));
         let id = InstanceId(self.next_instance_id);
@@ -522,12 +513,6 @@ impl Session {
             launch_data: None,
         });
         id
-    }
-
-    pub fn retain_devices(&mut self, present: &[DeviceHash]) {
-        for instance in self.all_instances_mut() {
-            instance.devices.retain(|hash| present.contains(hash));
-        }
     }
 
     pub fn remove_instance(&mut self, id: InstanceId) {

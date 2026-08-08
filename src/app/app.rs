@@ -27,8 +27,8 @@ impl PartyApp {
         fullscreen: bool,
         egl: Arc<EglApi>,
     ) -> Self {
-        let (events, events_rx) = AppEventSender::channel(ctx);
-        let mut state = AppState::new(events.clone(), monitors, handler_lite, egl);
+        let (events, events_rx) = AppEventSender::channel(ctx.clone());
+        let mut state = AppState::new(events.clone(), monitors, handler_lite, egl, ctx);
         let screen = state.mode.home_route().build(&mut state);
 
         if state.options.check_for_updates {

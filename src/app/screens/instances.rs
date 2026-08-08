@@ -6,7 +6,7 @@ use crate::app::config::save_cfg;
 use crate::app::screens::{Panels, Route, Screen};
 use crate::app::events::spawn_launch_worker;
 use crate::app::state::AppState;
-use crate::input::{DeviceHash, DeviceInfo, DeviceType};
+use crate::input::{DeviceType};
 use crate::launch::LaunchPlan;
 use crate::layout::LayoutKind;
 use crate::profiles::{next_temp_name, scan_profiles};
@@ -19,15 +19,6 @@ pub struct InstancesScreen {
 }
 
 
-struct DeviceRow {
-    hash: DeviceHash,
-    label: String,
-    enabled: bool,
-    pressed: bool,
-    device_type: DeviceType,
-    already_used: bool,
-}
-
 impl Screen for InstancesScreen {
     fn panels(&self, state: &AppState) -> Panels {
         Panels {
@@ -36,7 +27,6 @@ impl Screen for InstancesScreen {
             ..Panels::standard(state)
         }
     }
-
     fn bottom_panel(&mut self, state: &mut AppState, ui: &mut Ui) {
         self.controls(state, ui);
     }
@@ -132,12 +122,15 @@ impl InstancesScreen {
         let handler = handler.clone();
         let cfg = state.options.clone();
         let _ = save_cfg(&cfg);
-        let devices: Vec<DeviceInfo> = state.input_devices.iter().map(|device| device.info()).collect();
-        // TODO REPLACE!
-        let plan = Arc::new(LaunchPlan::build(&state.session, &state.monitors, devices, &cfg));
+        // let devices: Vec<DeviceInfo> = state.input_devices.iter().map(|device| device.info()).collect();
+        // // TODO REPLACE!
+        // let plan = Arc::new(LaunchPlan::build(&state.session, &state.monitors, devices, &cfg));
 
-        state.active_session = Some(plan.clone());
-        state.pending_route = Some(Route::Session(plan.clone()));
+        // state.active_session = Some(plan.clone());
+        // state.pending_route = Some(Route::Session(plan.clone()));
+
+
+
         // TODO REPLACE!
         // spawn_launch_worker(&state.events, handler, plan, cfg);
     }
@@ -254,7 +247,6 @@ impl InstancesScreen {
             .cloned()
             .collect();
         let allow_multiple = state.options.allow_multiple_instances_on_same_device;
-        let device_rows = self.device_rows(state, id);
 
         egui::Modal::new(ui.make_persistent_id("setup_instance_edit_modal")).show(ui.ctx(), |ui| {
             if ui.button("Close").clicked() {
@@ -296,50 +288,47 @@ impl InstancesScreen {
             });
 
             ui.separator();
-            for row in &device_rows {
-                let checked_before = instance.has_device(row.hash);
-                let mut checked = checked_before;
-                let blocked = !checked_before
-                    && !device_assignable(
-                        row.enabled,
-                        row.already_used,
-                        allow_multiple,
-                    );
 
-                let dev_text =
-                    RichText::new(&row.label).small().color(device_text_color(row, blocked));
-                let response = ui
-                    .add_enabled(!blocked, egui::Checkbox::new(&mut checked, dev_text))
-                    .on_hover_text(device_hover_text(row, blocked));
 
-                if response.changed() {
-                    match (checked, checked_before) {
-                        (true, false) => instance.devices.push(row.hash),
-                        (false, true) => instance.devices.retain(|device| *device != row.hash),
-                        _ => {}
-                    }
-                }
+            // TODO REPLACE TEMP CODE!!!!
+            let others_leases = state.input_state.leases().lock().unwrap().iter().filter(|lease| 
+                !instance.devices.iter().any(|my_lease| Arc::ptr_eq(&my_lease.inner(), lease))
+            ).collect::<Vec>();
+
+
+            for row in state.input_state.devices().lock().unwrap().iter_mut() {
+                // row.1.
+                let used_by_others = others_leases.iter().any(|lease| lease.device_path.lock().unwrap() == Some(row.0));
+                let used_by_me = instance.devices.iter().any(|lease| lease.inner().device_path.lock().unwrap() == Some(row.0));
+                
+                
+                // instance.devices
+                // let checked_before = instance.has_device(row.hash);
+                // let mut checked = checked_before;
+                // let blocked = !checked_before
+                //     && !device_assignable(
+                //         row.enabled,
+                //         row.already_used,
+                //         allow_multiple,
+                //     );
+
+                // let dev_text =
+                //     RichText::new(&row.label).small().color(device_text_color(row, blocked));
+                // let response = ui
+                //     .add_enabled(!blocked, egui::Checkbox::new(&mut checked, dev_text))
+                //     .on_hover_text(device_hover_text(row, blocked));
+
+                // if response.changed() {
+                //     match (checked, checked_before) {
+                //         (true, false) => instance.devices.push(row.hash),
+                //         (false, true) => instance.devices.retain(|device| *device != row.hash),
+                //         _ => {}
+                //     }
+                // }
             }
         });
     }
 
-    fn device_rows(&self, state: &AppState, id: InstanceId) -> Vec<DeviceRow> {
-        state
-            .input_devices
-            .iter()
-            .map(|device| {
-                let hash = device.hash();
-                DeviceRow {
-                    hash,
-                    label: device.label(),
-                    enabled: device.enabled(),
-                    pressed: device.has_button_held(),
-                    device_type: device.device_type(),
-                    already_used: state.session.device_used_by_other(hash, id),
-                }
-            })
-            .collect()
-    }
 }
 
 fn device_assignable(

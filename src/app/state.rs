@@ -1,23 +1,24 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use eframe::egui;
+
 use super::config::{PartyConfig, load_cfg};
 use super::screens::Route;
 use super::events::AppEventSender;
 use super::toasts::Toasts;
 use crate::handler::{Handler, scan_handlers};
-use crate::input::{InputDevice, scan_input_devices};
 use crate::launch::LaunchPlan;
 use crate::monitor::{Monitor, get_monitors_errorless};
 use crate::session::{InstanceId, Session};
 use crate::video::egl::EglApi;
 use crate::video::pipewire::PipewireInstance;
+use crate::input;
 
 pub struct AppState {
     pub options: PartyConfig,
 
     pub monitors: Vec<Monitor>,
-    pub input_devices: Vec<InputDevice>,
     pub profiles: Vec<String>,
 
     pub session: Session,
@@ -32,10 +33,8 @@ pub struct AppState {
     pub egl: Arc<EglApi>,
     pub pipewire: Option<PipewireInstance>,
 
+    pub input_state: input::InputState,
 }
-    /// Gamescope connections established by the launch worker, waiting for the
-    /// session screen to wrap them in stream views on the GL thread.
-    // pub pending_streams: HashMap<InstanceId, GamescopeConnection>,
 
 pub enum Mode {
     Full { handlers: Vec<Handler>, selected: usize },
@@ -75,9 +74,9 @@ impl AppState {
         monitors: Vec<Monitor>,
         handler_lite: Option<Handler>,
         egl: Arc<EglApi>,
+        ctx: egui::Context,
     ) -> Self {
         let options = load_cfg();
-        let input_devices = scan_input_devices(&options.pad_filter_type);
         let mode = match handler_lite {
             Some(handler) => Mode::Lite { handler },
             None => Mode::Full {
@@ -90,10 +89,11 @@ impl AppState {
             .inspect_err(|e| eprintln!("Failed to start pipewire thread: {e}"))
             .ok();
 
+        let input_state = input::InputState::new(ctx).unwrap();
+
         Self {
             options,
             monitors,
-            input_devices,
             profiles: Vec::new(),
             session: Session::default(),
             pending_route: None,
@@ -103,7 +103,7 @@ impl AppState {
             active_session: None,
             egl,
             pipewire,
-            // pending_streams: HashMap::new(),
+            input_state
         }
     }
 
@@ -117,11 +117,5 @@ impl AppState {
         for display in &mut self.session.displays {
             display.monitor_idx = display.monitor_idx.min(max);
         }
-    }
-
-    pub fn rescan_input_devices(&mut self) {
-        self.input_devices = scan_input_devices(&self.options.pad_filter_type);
-        let present: Vec<_> = self.input_devices.iter().map(|device| device.hash()).collect();
-        self.session.retain_devices(&present);
     }
 }

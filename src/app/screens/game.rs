@@ -104,7 +104,6 @@ fn play(state: &mut AppState) {
         );
         state.pending_route = Some(Route::EditHandler(h.clone()));
     } else {
-        state.rescan_input_devices();
         state.rescan_monitors();
         state.pending_route = Some(Route::Instances);
     }

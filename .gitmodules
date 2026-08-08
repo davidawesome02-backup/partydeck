@@ -1,7 +1,3 @@
 [submodule "deps/gamescope"]
   path = deps/gamescope
   url = https://github.com/partydeck/gamescope
-[submodule "deps/egui"]
-  path = deps/egui
-  url = https://github.com/partydeck/egui
-  branch = partydeck-patches

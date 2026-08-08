@@ -28,13 +28,14 @@ nix = { version = "0.30", default-features = false, features = ["poll", "fs", "i
 wayland-client = "0.31"
 wayland-scanner = "0.31"
 wayland-backend = "0.3"
+udev = "0.9.3"
 
 [patch.crates-io]
-eframe = { path = "deps/egui/crates/eframe" }
-egui = { path = "deps/egui/crates/egui" }
-egui_glow = { path = "deps/egui/crates/egui_glow" }
-egui-winit = { path = "deps/egui/crates/egui-winit" }
-egui_extras = { path = "deps/egui/crates/egui_extras" }
+eframe = { git = "https://github.com/partydeck/egui.git", branch = "partydeck-patches" }
+egui = { git = "https://github.com/partydeck/egui.git", branch = "partydeck-patches" }
+egui_glow = { git = "https://github.com/partydeck/egui.git", branch = "partydeck-patches" }
+egui-winit = { git = "https://github.com/partydeck/egui.git", branch = "partydeck-patches" }
+egui_extras = { git = "https://github.com/partydeck/egui.git", branch = "partydeck-patches" }
 
 [build-dependencies]
 reqwest = { version = "0.12.15", features = ["blocking", "json"], optional = true }
