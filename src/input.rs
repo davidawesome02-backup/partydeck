@@ -151,7 +151,10 @@ impl DeviceRefrence {
 
 impl Drop for DeviceRefrence {
     fn drop(&mut self) {
-        if self.is_alive {panic!("Attempt to drop DeviceRefrence before calling pre_drop");}
+        // TODO figure out a better way to do this while not causing a locking issue. 
+        // Maybe keep a copy of the ARC so we *can* drop properly, and log this before we maybe hang due to lock contention?
+        // Maybe check if the lock is held, and if so, panic instead of hanging?
+        if self.is_alive {eprintln!("Attempt to drop DeviceRefrence before calling pre_drop! May be caused by shutdown.");}
     }
 }
 

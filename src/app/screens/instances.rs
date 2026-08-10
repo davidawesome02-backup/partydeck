@@ -299,8 +299,6 @@ impl InstancesScreen {
 
                 let is_held = device.has_button_held();
 
-                
-
                 let (used_by_others, used_by_me) = if let Some(device_id) = device.device_id && let Some(target) = input_state.targets.get(&device_id) {
                     let used_by_me = target.users.keys().any(|dev_user| instance.devices.iter().any(|my_user| my_user.user_id == *dev_user));
                     let used_by_others = target.users.keys().any(|dev_user| !instance.devices.iter().any(|my_user| my_user.user_id == *dev_user));
@@ -331,11 +329,13 @@ impl InstancesScreen {
             }
 
 
-            let orphaned_devices = instance.devices.iter().filter(|my_dev| !input_state.devices.values().any(|dev| {dev.device_id == Some(my_dev.device_id)}));
+            let orphaned_devices = instance.devices.iter().filter(|my_dev| !input_state.devices.values().any(|dev| {dev.device_id == Some(my_dev.device_id)})).collect::<Vec<&DeviceRefrence>>();
+            if orphaned_devices.len() > 0 {ui.separator();}
+
             for orphaned_device in orphaned_devices {
                 let Some(target) = input_state.targets.get(&orphaned_device.device_id) else {continue};
 
-                // target.target_name
+                
                 let dev_text =
                     RichText::new(format!("Missing - {}", target.target_name)).small().color(egui::Color32::LIGHT_GREEN);
 
@@ -347,7 +347,7 @@ impl InstancesScreen {
                 if !checked {
                     device_add_remove = Some((false, Some(orphaned_device.device_id), PathBuf::default()))
                 }
-            }//input_state.
+            }
             
 
             if let Some(device_data) = device_add_remove {
@@ -368,16 +368,6 @@ impl InstancesScreen {
             }
 
 
-            
-            // for device_arc in instance.devices.iter().filter(|d| {
-            //     state.input_state.is_orphan(d.shared_lease_id())
-            // }) {
-            //     // instance.devices.iter()
-            //     device_arc.
-            // }
-
-
-
         });
     }
 
@@ -396,10 +386,6 @@ fn device_text_color(enabled: bool, pressed: bool, already_used: bool) -> Color3
 }
 
 fn device_hover_text(enabled: bool, pressed: bool, already_used: bool) -> &'static str {
-    // if blocked {
-    //     return "Unavailable for this instance";
-    // }
-
     match (enabled, pressed, already_used) {
         (false, _, false) => "Disabled",
         (false, _, true) => "Disabled\nAlready used",

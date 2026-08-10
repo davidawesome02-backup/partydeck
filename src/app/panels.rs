@@ -1,4 +1,4 @@
-use eframe::egui::{self, Popup, RichText, Ui};
+use eframe::egui::{self, Color32, Popup, RichText, Ui};
 
 use crate::app::events::spawn_trash_removal;
 use crate::app::screens::{NavTab, Route};
@@ -179,7 +179,8 @@ pub fn right_panel(state: &mut AppState, ui: &mut Ui) {
     ui.heading("Devices");
     ui.separator();
 
-    for dev in state.input_state.inner().devices.values_mut() {
+    let input_state = state.input_state.inner();
+    for dev in input_state.devices.values() {
         if dev.device_type() == DeviceType::Other {continue;}
 
         
@@ -191,6 +192,14 @@ pub fn right_panel(state: &mut AppState, ui: &mut Ui) {
             dev_text = dev_text.strong();
         }
 
+        ui.label(dev_text);
+    }
+
+    let orphaned_devs = input_state.targets.values().filter(|target| !input_state.devices.values().any(|dev| dev.device_id == Some(target.device_id))).collect::<Vec<_>>();
+    if orphaned_devs.len()>0 {ui.separator();}
+    
+    for dev in orphaned_devs {
+        let dev_text = RichText::new(format!("Missing - {}", dev.target_name)).small().weak().color(Color32::LIGHT_GREEN);
         ui.label(dev_text);
     }
 
