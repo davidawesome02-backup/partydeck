@@ -799,7 +799,7 @@
 
 
 use std::{
-    collections::{HashMap, VecDeque}, hash::{Hash, Hasher}, os::fd::{AsFd, BorrowedFd, OwnedFd}, path::PathBuf, sync::{
+    collections::{HashMap, VecDeque}, hash::{Hash, Hasher}, num::NonZeroU64, os::fd::{AsFd, BorrowedFd, OwnedFd}, path::PathBuf, sync::{
         Arc, Mutex, atomic::{AtomicU64, Ordering}, mpsc::{Receiver, Sender, channel},
     }, thread::{self, JoinHandle}, time::Duration,
 };
@@ -850,117 +850,866 @@ pub enum PadButton {
 }
 
 
-fn compute_device_hash(unique: String, input_id: InputId, name: String) -> DeviceHash {
-    use std::collections::hash_map::DefaultHasher;
-    let mut hasher = DefaultHasher::new();
-    (unique, input_id, name).hash(&mut hasher);
-    hasher.finish()
-}
+// fn compute_device_hash(unique: String, input_id: InputId, name: String) -> DeviceHash {
+//     use std::collections::hash_map::DefaultHasher;
+//     let mut hasher = DefaultHasher::new();
+//     (unique, input_id, name).hash(&mut hasher);
+//     hasher.finish()
+// }
 
-fn compute_device_hash_dev(dev: &mut Device) -> DeviceHash {
-    compute_device_hash(
-        dev.unique_name().unwrap_or("UNKNOWN").to_string(), 
-        dev.input_id(), 
-        dev.name().unwrap_or("UNKNOWN").to_string()
-    )
-}
-fn compute_device_hash_lease(lease: &SharedLease) -> DeviceHash {
-    compute_device_hash(
-        lease.dev_unique_name.clone(),
-        lease.dev_input_id.clone(),
-        lease.dev_name.clone(),
-    )
-}
+// fn compute_device_hash_dev(dev: &mut Device) -> DeviceHash {
+//     compute_device_hash(
+//         dev.unique_name().unwrap_or("UNKNOWN").to_string(), 
+//         dev.input_id(), 
+//         dev.name().unwrap_or("UNKNOWN").to_string()
+//     )
+// }
+// fn compute_device_hash_lease(lease: &SharedLease) -> DeviceHash {
+//     compute_device_hash(
+//         lease.dev_unique_name.clone(),
+//         lease.dev_input_id.clone(),
+//         lease.dev_name.clone(),
+//     )
+// }
 
-// ---------------------- SharedLease -----------------
+// // ---------------------- SharedLease -----------------
 
-pub struct SharedLease {
-    pub id: SharedLeaseId,
+// pub struct SharedLease {
+//     pub id: SharedLeaseId,
 
-    // matching keys (copied for matching)
-    pub dev_name: String,
-    pub dev_input_id: InputId,
-    pub dev_unique_name: String,
+//     // matching keys (copied for matching)
+//     pub dev_name: String,
+//     pub dev_input_id: InputId,
+//     pub dev_unique_name: String,
 
-    // users_info: lease_id -> (ViewportId, pending events, grabbed_requested)
-    pub users_info: HashMap<LeaseId, (egui::ViewportId, VecDeque<InputEvent>, bool)>,
+//     // users_info: lease_id -> (ViewportId, pending events, grabbed_requested)
+//     pub users_info: HashMap<LeaseId, (egui::ViewportId, VecDeque<InputEvent>, bool)>,
 
-    // convenience: assigned device path if bound
-    pub assigned_device_path: Option<PathBuf>,
-}
+//     // convenience: assigned device path if bound
+//     pub assigned_device_path: Option<PathBuf>,
+// }
 
-impl SharedLease {
-    fn new(
-        id: SharedLeaseId,
-        dev_name: String,
-        dev_input_id: InputId,
-        dev_unique_name: String,
-    ) -> Self {
-        Self {
-            id,
-            dev_name,
-            dev_input_id,
-            dev_unique_name,
-            users_info: HashMap::new(),
-            assigned_device_path: None,
-        }
-    }
+// impl SharedLease {
+//     fn new(
+//         id: SharedLeaseId,
+//         dev_name: String,
+//         dev_input_id: InputId,
+//         dev_unique_name: String,
+//     ) -> Self {
+//         Self {
+//             id,
+//             dev_name,
+//             dev_input_id,
+//             dev_unique_name,
+//             users_info: HashMap::new(),
+//             assigned_device_path: None,
+//         }
+//     }
 
-    pub fn add_user(&mut self, lease_id: LeaseId, viewport: egui::ViewportId, grabbed: bool) {
-        self.users_info.entry(lease_id).or_insert((viewport, VecDeque::new(), grabbed));
-    }
+//     pub fn add_user(&mut self, lease_id: LeaseId, viewport: egui::ViewportId, grabbed: bool) {
+//         println!("added entry: {lease_id}");
+//         self.users_info.entry(lease_id).or_insert((viewport, VecDeque::new(), grabbed));
+//     }
 
-    pub fn remove_user(&mut self, lease_id: LeaseId) {
-        self.users_info.remove(&lease_id);
-    }
+//     pub fn remove_user(&mut self, lease_id: LeaseId) {
+//         println!("removed entry: {lease_id}");
+//         self.users_info.remove(&lease_id);
+//     }
 
-    pub fn set_user_grab(&mut self, lease_id: LeaseId, grabbed: bool) {
-        if let Some(v) = self.users_info.get_mut(&lease_id) {
-            v.2 = grabbed;
-        }
-    }
+//     pub fn set_user_grab(&mut self, lease_id: LeaseId, grabbed: bool) {
+//         if let Some(v) = self.users_info.get_mut(&lease_id) {
+//             v.2 = grabbed;
+//         }
+//     }
 
-    pub fn get_grabbed_status(&self) -> bool {
-        self.users_info.values().any(|(_, _, g)| *g)
-    }
+//     pub fn get_grabbed_status(&self) -> bool {
+//         self.users_info.values().any(|(_, _, g)| *g)
+//     }
 
-    pub fn is_empty(&self) -> bool {
-        self.users_info.is_empty()
-    }
+//     pub fn is_empty(&self) -> bool {
+//         self.users_info.is_empty()
+//     }
 
-    /// Called by the input thread when device events arrive; append events for each user and request repaint.
-    pub fn on_input(&mut self, events: &Vec<InputEvent>, ctx: &egui::Context) {
-        if events.is_empty() { return; }
-        for (_, (viewport, q, _)) in self.users_info.iter_mut() {
-            q.extend(events.clone());
-            ctx.request_repaint_once_for(*viewport);
-        }
-    }
+//     /// Called by the input thread when device events arrive; append events for each user and request repaint.
+//     pub fn on_input(&mut self, events: &Vec<InputEvent>, ctx: &egui::Context) {
+//         if events.is_empty() { return; }
+//         for (_, (viewport, q, _)) in self.users_info.iter_mut() {
+//             q.extend(events.clone());
+//             ctx.request_repaint_once_for(*viewport);
+//         }
+//     }
 
-    /// Pop up to `max` events for a specific lease/user.
-    pub fn pop_events_for(&mut self, lease_id: LeaseId, max: usize) -> Vec<InputEvent> {
-        if let Some((_, q, _)) = self.users_info.get_mut(&lease_id) {
-            let mut out = Vec::new();
-            for _ in 0..max {
-                if let Some(ev) = q.pop_front() { out.push(ev) } else { break; }
-            }
-            out
-        } else {
-            Vec::new()
-        }
-    }
-}
+//     /// Pop up to `max` events for a specific lease/user.
+//     pub fn pop_events_for(&mut self, lease_id: LeaseId, max: usize) -> Vec<InputEvent> {
+//         if let Some((_, q, _)) = self.users_info.get_mut(&lease_id) {
+//             let mut out = Vec::new();
+//             for _ in 0..max {
+//                 if let Some(ev) = q.pop_front() { out.push(ev) } else { break; }
+//             }
+//             out
+//         } else {
+//             Vec::new()
+//         }
+//     }
+// }
 
-// ---------------------- InternalDevice ------------------------
+// // ---------------------- InternalDevice ------------------------
+
+// pub struct InternalDevice {
+//     pub path: PathBuf,
+//     pub hash: DeviceHash,
+//     pub device: Arc<Mutex<Device>>,
+//     /// optional bound shared lease
+//     pub lease: Option<Arc<Mutex<SharedLease>>>,
+//     pub grabbed: bool,
+
+
+//     has_button_held: bool,
+//     latest_gui_pad: Option<PadButton>,
+// }
+
+// impl InternalDevice {
+//     fn new(path: PathBuf, dev: Device, hash: DeviceHash) -> Self {
+//         Self {
+//             path,
+//             hash,
+//             device: Arc::new(Mutex::new(dev)),
+//             lease: None,
+//             grabbed: false,
+//             has_button_held: false,
+//             latest_gui_pad: None,
+//         }
+//     }
+
+//     fn update_grabbed_status(&mut self) {
+//         let should_grab = match &self.lease {
+//             Some(lease_arc) => {
+//                 let lease = lease_arc.lock().unwrap();
+//                 lease.get_grabbed_status()
+//             }
+//             None => false,
+//         };
+
+//         if should_grab != self.grabbed {
+//             if let Ok(mut dev) = self.device.lock() {
+//                 let _ = if should_grab {dev.grab()} else {dev.ungrab()};
+//             }
+//             self.grabbed = should_grab;
+//         }
+//     }
+
+//     /// Fetch events and dispatch to its bound SharedLease (if any). Return Err(()) if device fetch failed.
+//     fn fetch_and_dispatch_events(&mut self, ctx: &egui::Context) -> Result<(), ()> {
+//         let dev_arc = Arc::clone(&self.device);
+//         let mut dev = dev_arc.lock().map_err(|_| ())?;
+//         match dev.fetch_events() {
+//             Ok(iter) => {
+//                 let events = iter.collect::<Vec<InputEvent>>();
+//                 if !events.is_empty() {
+//                     if let Some(lease_arc) = &self.lease {
+//                         let mut lease = lease_arc.lock().unwrap();
+//                         lease.on_input(&events, ctx);
+//                     }
+//                     self.gui_poll(events);
+//                 }
+//                 Ok(())
+//             }
+//             Err(_) => Err(()),
+//         }
+//     }
+    
+
+//     pub fn name(&self) -> String {
+//         let dev = self.device.lock().unwrap();
+//         dev.name().unwrap_or_else(|| "").to_string()
+//     }
+    
+//     pub fn device_type(&mut self) -> DeviceType {
+//         let dev = self.device.lock().unwrap();
+//         let device_type = match dev.supported_keys() {
+//             Some(keys) => {
+//                 if keys.contains(KeyCode::BTN_SOUTH) {
+//                     DeviceType::Gamepad
+//                 } else if keys.contains(KeyCode::BTN_LEFT) {
+//                     DeviceType::Mouse
+//                 } else if keys.contains(KeyCode::KEY_SPACE) {
+//                     DeviceType::Keyboard
+//                 } else {
+//                     DeviceType::Other
+//                 }
+//             }
+//             None => DeviceType::Other,
+//         };
+//         device_type
+//     }
+
+//     pub fn emoji(&mut self) -> String {
+//         match self.device_type() {
+//             DeviceType::Gamepad => "🎮",
+//             DeviceType::Keyboard => "🖮",
+//             DeviceType::Mouse => "🖱",
+//             DeviceType::Other => "",
+//         }.to_string()
+//     }
+
+//     pub fn fancyname(&self) -> String {
+//         let name = self.name();
+//         let name_str = name.as_str();
+
+//         let dev = self.device.lock().unwrap();
+
+//         match dev.input_id().vendor() {
+//             0x045e => "Xbox Controller",
+//             0x054c => "PS Controller",
+//             0x057e => "NT Pro Controller",
+//             0x28de => "Steam Input",
+//             _ => name_str,
+//         }.to_string()
+//     }
+
+//     pub fn path(&self) -> &str {
+//         self.path.to_str().unwrap_or_default()
+//     }
+
+//     pub fn label(&mut self) -> String {
+//         let emoji = self.emoji();
+//         let fancyname = self.fancyname();
+//         let path_id = self.path().trim_start_matches("/dev/input/event");
+//         format!(
+//             "{} {} ({})",
+//             emoji,
+//             fancyname,
+//             path_id
+//         )
+//     }
+    
+//     pub fn enabled(&self, filter: &PadFilterType) -> bool {
+//         let dev = self.device.lock().unwrap();
+//         match filter {
+//             PadFilterType::All => true,
+//             PadFilterType::NoSteamInput => dev.input_id().vendor() != 0x28de,
+//             PadFilterType::OnlySteamInput => dev.input_id().vendor() == 0x28de,
+//         }
+//     }
+
+//     pub fn gui_poll(&mut self, events: Vec<InputEvent>) {
+//         let mut btn: Option<PadButton> = None;
+
+//         for event in events {
+//             let summary = event.destructure();
+
+//             match summary {
+//                 EventSummary::Key(_, _, 1) => {
+//                     self.has_button_held = true;
+//                 }
+//                 EventSummary::Key(_, _, 0) => {
+//                     self.has_button_held = false;
+//                 }
+//                 _ => {}
+//             }
+
+//             btn = match summary {
+//                 EventSummary::Key(_, KeyCode::BTN_SOUTH, 1) => Some(PadButton::ABtn),
+//                 EventSummary::Key(_, KeyCode::BTN_EAST, 1) => Some(PadButton::BBtn),
+//                 EventSummary::Key(_, KeyCode::BTN_NORTH, 1) => Some(PadButton::XBtn),
+//                 EventSummary::Key(_, KeyCode::BTN_WEST, 1) => Some(PadButton::YBtn),
+//                 EventSummary::Key(_, KeyCode::BTN_START, 1) => Some(PadButton::StartBtn),
+//                 EventSummary::Key(_, KeyCode::BTN_SELECT, 1) => Some(PadButton::SelectBtn),
+//                 EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_HAT0X, -1) => {
+//                     Some(PadButton::Left)
+//                 }
+//                 EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_HAT0X, 1) => {
+//                     Some(PadButton::Right)
+//                 }
+//                 EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_HAT0Y, -1) => {
+//                     Some(PadButton::Up)
+//                 }
+//                 EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_HAT0Y, 1) => {
+//                     Some(PadButton::Down)
+//                 }
+//                 //keyboard
+//                 EventSummary::Key(_, KeyCode::KEY_A, 1) => Some(PadButton::AKey),
+//                 EventSummary::Key(_, KeyCode::KEY_R, 1) => Some(PadButton::RKey),
+//                 EventSummary::Key(_, KeyCode::KEY_X, 1) => Some(PadButton::XKey),
+//                 EventSummary::Key(_, KeyCode::KEY_Z, 1) => Some(PadButton::ZKey),
+//                 //mouse
+//                 EventSummary::Key(_, KeyCode::BTN_RIGHT, 1) => Some(PadButton::RightClick),
+//                 _ => btn,
+//             };
+//         }
+
+//         self.latest_gui_pad = btn;
+//     }
+
+//     pub fn has_button_held(&mut self) -> bool {return self.has_button_held;}
+
+//     pub fn latest_gui_pad(&mut self) -> Option<PadButton> {return self.latest_gui_pad.clone();}
+// }
+
+// // ---------------------- Manager (InputStateInner) --------------------------
+
+// pub struct InputStateInner {
+//     pub devices: Vec<Arc<Mutex<InternalDevice>>>,
+//     pub shared_leases: HashMap<SharedLeaseId, Arc<Mutex<SharedLease>>>,
+//     pub orphan_leases: Vec<Arc<Mutex<SharedLease>>>, // Maybe hashmap soon :D
+//     pub ctx: egui::Context,
+// }
+
+// impl InputStateInner {
+//     fn new(ctx: egui::Context) -> Self {
+//         Self {
+//             devices: Vec::new(),
+//             shared_leases: HashMap::new(),
+//             orphan_leases: Vec::new(),
+//             ctx,
+//         }
+//     }
+
+//     /// Try find an unused device that matches the shared lease's hash.
+//     fn find_matching_unused_device(&mut self, lease: &SharedLease) -> Option<Arc<Mutex<InternalDevice>>> {
+//         let target_hash = compute_device_hash_lease(lease);
+
+//         self.devices.iter()
+//             .find(|dev_arc| {
+//                 if let Ok(dev_guard) = dev_arc.lock() {
+//                     dev_guard.lease.is_none() && dev_guard.hash == target_hash
+//                 } else { false }
+//             })
+//             .cloned()
+//     }
+
+//     fn bind_lease_to_device(&mut self, lease_arc: &Arc<Mutex<SharedLease>>, dev_arc: &Arc<Mutex<InternalDevice>>) {
+//         if let Ok(mut dev) = dev_arc.lock() {
+//             dev.lease = Some(Arc::clone(lease_arc));
+//             dev.update_grabbed_status();
+//             if let Ok(mut lease) = lease_arc.lock() {
+//                 lease.assigned_device_path = Some(dev.path.clone());
+//             }
+//         }
+//     }
+
+//     /// When a device is added: create InternalDevice and attempt to bind a matching orphan lease.
+//     fn add_device_obj(&mut self, path: PathBuf, mut dev: Device) {
+//         let hash = compute_device_hash_dev(&mut dev);
+//         let dev_arc = Arc::new(Mutex::new(InternalDevice::new(path.clone(), dev, hash)));
+//         // try to find a matching orphan lease
+//         if let Some((idx, lease_arc)) = self.orphan_leases.iter().enumerate()
+//             .find(|(_, l)| {
+//                 if let Ok(lease) = l.lock() {
+//                     let target_hash = compute_device_hash_lease(&lease);
+//                     target_hash == hash
+//                 } else { false }
+//             })
+//             .map(|(i, l)| (i, Arc::clone(l)))
+//         {
+//             // bind the orphan lease to this device
+//             self.bind_lease_to_device(&lease_arc, &dev_arc);
+
+//             // // ADD THIS LINE:    
+//             // let lease_id = lease_arc.lock().unwrap().id;    
+//             // self.shared_leases.insert(lease_id, Arc::clone(&lease_arc));
+            
+//             // remove from orphan list
+//             let _ = self.orphan_leases.swap_remove(idx);
+//         }
+//         self.devices.push(dev_arc);
+//     }
+
+//     /// Remove device by path; if bound, make its SharedLease orphaned again.
+//     fn remove_device_by_path(&mut self, path: &PathBuf) {
+//         if let Some(pos) = self.devices.iter().position(|d| {
+//             d.lock().map(|g| g.path == *path).unwrap_or(false)
+//         }) {
+//             // if bound, orphan the lease
+//             if let Ok(mut dev) = self.devices[pos].lock() {
+//                 if let Some(lease_arc) = dev.lease.take() {
+//                     if let Ok(mut lease) = lease_arc.lock() {
+//                         lease.assigned_device_path = None;
+//                     }
+//                     self.orphan_leases.push(lease_arc);
+//                 }
+//             }
+//             self.devices.swap_remove(pos);
+//         }
+//     }
+
+//     /// Attempt to bind all orphan leases to available devices.
+
+//     fn fix_orphans(&mut self) {
+//         let mut i = 0;
+//         while i < self.orphan_leases.len() {
+//             // Cheaply clone the Arc to end the borrow on `self` immediately
+//             let lease_arc = self.orphan_leases[i].clone();
+            
+//             let bound = {
+//                 let lease = lease_arc.lock().unwrap();
+//                 self.find_matching_unused_device(&lease)
+//             };
+            
+//             if let Some(dev_arc) = bound {
+//                 self.bind_lease_to_device(&lease_arc, &dev_arc);
+//                 let _ = self.orphan_leases.swap_remove(i);
+//             } else {
+//                 i += 1;
+//             }
+//         }
+//     }
+
+//     /// Poll devices and dispatch events. This function expects to be called from the input thread.
+//     fn poll_and_dispatch(&mut self, monitor_fd: BorrowedFd<'_>) -> Result<(), Box<dyn std::error::Error>> {
+//         // Build FD snapshot
+//         let mut fds: Vec<(PathBuf, OwnedFd)> = Vec::new();
+//         for dev_arc in self.devices.iter() {
+//             if let Ok(dev_guard) = dev_arc.lock() {
+//                 if let Ok(device_guard) = dev_guard.device.lock() {
+//                     let fd = dup(device_guard.as_fd())?;
+//                     fds.push((dev_guard.path.clone(), fd));
+//                 }
+//             }
+//         }
+
+//         // Build poll vector: optional monitor fd first
+//         let mut poll_fds: Vec<PollFd> = Vec::new();
+//         poll_fds.push(PollFd::new(monitor_fd, PollFlags::POLLIN));
+
+//         for &(_, ref fd) in fds.iter() {
+//             poll_fds.push(PollFd::new(fd.as_fd(), PollFlags::POLLIN));
+//         }
+
+//         // Blocking poll with timeout
+//         let _ = poll(&mut poll_fds, PollTimeout::try_from(POLL_TIMEOUT_MS as i32)?)?;
+
+
+//         // For devices that fired, map index -> path and dispatch
+//         for (idx, poll_fd) in poll_fds.iter().enumerate().skip(1) { // Skip monitor FD
+//             if let Some(revents) = poll_fd.revents() {
+//                 if revents.intersects(PollFlags::POLLIN | PollFlags::POLLERR | PollFlags::POLLHUP) {
+//                     // map idx-device_start_idx -> fds index
+//                     let fds_idx = idx - 1; // Skip monitor FD
+//                     if let Some((path, _fd)) = fds.get(fds_idx) {
+//                         // find device entry by path and dispatch
+//                         if let Some(dev_arc) = self.devices.iter().find(|d| d.lock().map(|g| g.path == *path).unwrap_or(false)).cloned() {
+//                             if let Ok(mut dev) = dev_arc.lock() {
+//                                 if dev.fetch_and_dispatch_events(&self.ctx).is_err() {
+//                                     // device failed: remove
+//                                     let p = dev.path.clone();
+//                                     drop(dev);
+//                                     self.remove_device_by_path(&p);
+//                                 }
+//                             }
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+
+//         thread::sleep_ms(10);
+
+//         Ok(())
+//     }
+// }
+
+// // ---------------------- Public wrapper --------------------------
+
+// pub struct InputState {
+//     inner: Arc<Mutex<InputStateInner>>,
+//     latest_shared_lease_id: AtomicU64,
+//     latest_lease_id: AtomicU64,
+//     shutdown_tx: Sender<()>,
+//     _thread: JoinHandle<()>,
+// }
+
+// impl InputState {
+//     pub fn new(ctx: egui::Context) -> Result<Self, Box<dyn std::error::Error>> {
+
+//         let inner = Arc::new(Mutex::new(InputStateInner::new(ctx.clone())));
+//         let (shutdown_tx, shutdown_rx) = channel();
+//         let thread_inner = Arc::clone(&inner);
+
+//         let thread = thread::spawn(move || {
+//             // create udev monitor in thread
+//             let monitor = udev::MonitorBuilder::new().and_then(|b| b.match_subsystem("input")).and_then(|b| b.listen()).unwrap();
+
+
+//             // scan existing devices
+//             if let Ok(mut guard) = thread_inner.lock() {
+//                 for devpath in evdev::enumerate() {
+//                     if let Ok(device) = Device::open(&devpath.0) {
+//                         let _ = device.set_nonblocking(true);
+//                         guard.add_device_obj(devpath.0.clone(), device);
+//                     }
+//                 }
+//                 guard.fix_orphans();
+//             }
+
+//             // run loop
+//             loop {
+//                 // check shutdown
+//                 match shutdown_rx.try_recv() {
+//                     Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+//                     Err(std::sync::mpsc::TryRecvError::Empty) => {}
+//                 }
+
+                
+//                 // non-blocking iterate
+//                 while let Some(event) = monitor.iter().next() {
+//                     match event.action().and_then(|a| a.to_str()) {
+//                         Some("add") => {
+//                             if let Some(devnode) = event.devnode() {
+//                                 if let Ok(device) = Device::open(devnode) {
+//                                     let _ = device.set_nonblocking(true);
+//                                     if let Ok(mut guard) = thread_inner.lock() {
+//                                         guard.add_device_obj(devnode.to_path_buf(), device);
+//                                     }
+//                                 }
+//                             }
+//                         }
+//                         Some("remove") => {
+//                             if let Some(devnode) = event.devnode() {
+//                                 if let Ok(mut guard) = thread_inner.lock() {
+//                                     guard.remove_device_by_path(&devnode.to_path_buf());
+//                                 }
+//                             }
+//                         }
+//                         _ => {}
+//                     }
+//                 }
+
+//                 // snapshot monitor fd if present
+//                 let monitor_fd = monitor.as_fd();
+
+//                 // Poll + dispatch (we lock inner inside)
+
+//                 // THIS IS THE LOCKING BUG DAVID TODO: FIX!
+
+//                 let mut fds: Vec<(PathBuf, OwnedFd)> = Vec::new();
+//                 let mut poll_fds: Vec<PollFd> = Vec::new();
+
+//                 if let Ok(guard) = thread_inner.lock() {
+//                     // Build FD snapshot
+//                     for dev_arc in guard.devices.iter() {
+//                         if let Ok(dev_guard) = dev_arc.lock() {
+//                             if let Ok(device_guard) = dev_guard.device.lock() {
+//                                 let fd = dup(device_guard.as_fd()).unwrap();
+//                                 fds.push((dev_guard.path.clone(), fd));
+//                             }
+//                         }
+//                     }
+
+//                     // Build poll vector: optional monitor fd first
+//                     poll_fds.push(PollFd::new(monitor_fd, PollFlags::POLLIN));
+
+//                     for &(_, ref fd) in fds.iter() {
+//                         poll_fds.push(PollFd::new(fd.as_fd(), PollFlags::POLLIN));
+//                     }
+
+//                     // Blocking poll with timeout
+//                 }
+
+//                 let _ = poll(&mut poll_fds, PollTimeout::try_from(POLL_TIMEOUT_MS as i32).unwrap()).unwrap();
+
+
+//                 if let Ok(mut guard) = thread_inner.lock() {
+
+//                     // For devices that fired, map index -> path and dispatch
+//                     for (idx, poll_fd) in poll_fds.iter().enumerate().skip(1) { // Skip monitor FD
+//                         if let Some(revents) = poll_fd.revents() {
+//                             if revents.intersects(PollFlags::POLLIN | PollFlags::POLLERR | PollFlags::POLLHUP) {
+//                                 // map idx-device_start_idx -> fds index
+//                                 let fds_idx = idx - 1; // Skip monitor FD
+//                                 if let Some((path, _fd)) = fds.get(fds_idx) {
+//                                     // find device entry by path and dispatch
+//                                     if let Some(dev_arc) = guard.devices.iter().find(|d| d.lock().map(|g| g.path == *path).unwrap_or(false)).cloned() {
+//                                         if let Ok(mut dev) = dev_arc.lock() {
+//                                             if dev.fetch_and_dispatch_events(&guard.ctx).is_err() {
+//                                                 // device failed: remove
+//                                                 let p = dev.path.clone();
+//                                                 drop(dev);
+//                                                 guard.remove_device_by_path(&p);
+//                                             }
+//                                         }
+//                                     }
+//                                 }
+//                             }
+//                         }
+//                     }
+
+//                     // fix orphans (in case new devices bound)
+//                     guard.fix_orphans();
+//                 }
+//             }
+//         });
+
+//         Ok(Self {
+//             inner,
+//             latest_shared_lease_id: AtomicU64::new(1),
+//             latest_lease_id: AtomicU64::new(1),
+//             shutdown_tx,
+//             _thread: thread,
+//         })
+//     }
+
+//     /// Create or reuse a shared lease and return a DevLease handle.
+//     pub fn new_dev_lease(
+//         &self,
+//         requested_shared_id: Option<SharedLeaseId>,
+//         dev_name: String,
+//         dev_input_id: InputId,
+//         dev_unique_name: String,
+//         viewport: egui::ViewportId,
+//         grabbed: bool,
+//     ) -> DevLease {
+//         let lease_arc: Arc<Mutex<SharedLease>>;
+//         let lease_id = self.latest_lease_id.fetch_add(1, Ordering::SeqCst);
+
+//         {
+//             let mut inner = self.inner.lock().unwrap();
+
+//             // Try requested id
+//             if let Some(req_id) = requested_shared_id {
+//                 if let Some(existing) = inner.shared_leases.get(&req_id) {
+//                     lease_arc = Arc::clone(existing);
+//                 } else {
+//                     // not found; create new below
+//                     let new_shared_id = self.latest_shared_lease_id.fetch_add(1, Ordering::SeqCst);
+//                     let s = SharedLease::new(new_shared_id, dev_name.clone(), dev_input_id.clone(), dev_unique_name.clone());
+//                     let s_arc = Arc::new(Mutex::new(s));
+//                     inner.shared_leases.insert(new_shared_id, Arc::clone(&s_arc));
+//                     inner.orphan_leases.push(Arc::clone(&s_arc));
+//                     lease_arc = s_arc;
+//                 }
+//             } else {
+//                 // find existing match by metadata
+//                 if let Some((_, existing)) = inner.shared_leases.iter()
+//                     .find(|(_, arc)| {
+//                         if let Ok(l) = arc.lock() {
+//                             l.dev_name == dev_name && l.dev_unique_name == dev_unique_name && l.dev_input_id == dev_input_id
+//                         } else { false }
+//                     }) {
+//                     lease_arc = Arc::clone(existing);
+//                 } else {
+//                     // create new shared lease
+//                     let new_shared_id = self.latest_shared_lease_id.fetch_add(1, Ordering::SeqCst);
+//                     let s = SharedLease::new(new_shared_id, dev_name.clone(), dev_input_id.clone(), dev_unique_name.clone());
+//                     let s_arc = Arc::new(Mutex::new(s));
+//                     inner.shared_leases.insert(new_shared_id, Arc::clone(&s_arc));
+//                     inner.orphan_leases.push(Arc::clone(&s_arc));
+//                     lease_arc = s_arc;
+//                 }
+//             }
+
+//             // register user
+//             let mut lease = lease_arc.lock().unwrap();
+//             lease.add_user(lease_id, viewport, grabbed);
+
+//             // attempt immediate binding
+//             inner.fix_orphans();
+//         }
+
+//         DevLease {
+//             manager: Arc::clone(&self.inner),
+//             shared_lease_id: lease_arc.lock().unwrap().id,
+//             lease_id,
+//         }
+//     }
+
+//     pub fn new_dev_lease_from_dev(
+//         &self,
+//         dev: &mut InternalDevice,
+//         viewport: egui::ViewportId,
+//         grabbed: bool,
+//     ) -> DevLease {
+//         let lease_id = self.latest_lease_id.fetch_add(1, Ordering::SeqCst);
+
+//         if let Some(lease) = &dev.lease {
+//             println!("Adding to existing lease!");
+//             let mut locked_shared_lease = lease.lock().unwrap();
+//             locked_shared_lease.add_user(lease_id, viewport, grabbed);
+
+//             return DevLease { manager: self.inner.clone(), shared_lease_id: locked_shared_lease.id, lease_id };
+//         } else {
+//             println!("New lease!");
+//             let mut inner = self.inner.lock().unwrap();
+
+//             let new_shared_id = self.latest_shared_lease_id.fetch_add(1, Ordering::SeqCst);
+            
+//             let device_locked = dev.device.lock().unwrap();
+
+//             let mut sh_lease = SharedLease::new(
+//                 new_shared_id, 
+//                 device_locked.name().unwrap_or("UNKNOWN").to_string(), 
+//                 device_locked.input_id(), 
+//                 device_locked.unique_name().unwrap_or("UNKNOWN").to_string()
+//             );
+            
+//             sh_lease.add_user(lease_id, viewport, grabbed);
+            
+//             let sh_lease_arc = Arc::new(Mutex::new(sh_lease));
+//             inner.shared_leases.insert(new_shared_id, Arc::clone(&sh_lease_arc));
+
+//             dev.lease = Some(sh_lease_arc);
+
+//             return DevLease { manager: self.inner.clone(), shared_lease_id: new_shared_id, lease_id };
+//         }
+//     }
+
+//     pub fn fix_orphans(&self) {
+//         if let Ok(mut inner) = self.inner.lock() {
+//             inner.fix_orphans();
+//         }
+//     }
+
+//     pub fn get_shared_lease(&self, id: SharedLeaseId) -> Option<Arc<Mutex<SharedLease>>> {
+//         self.inner.lock().unwrap().shared_leases.get(&id).cloned()
+//     }
+
+//     pub fn devices(&self) -> Vec<Arc<Mutex<InternalDevice>>> {
+//         self.inner.lock().unwrap().devices.clone()
+//     }
+
+//     pub fn is_orphan(&self, id: SharedLeaseId) -> bool {
+//         self.inner.lock().unwrap().orphan_leases.iter().any(|lease| lease.lock().unwrap().id == id)
+//     }
+// }
+
+// impl Drop for InputState {
+//     fn drop(&mut self) {
+//         let _ = self.shutdown_tx.send(());
+//         // join thread is not required here; handle if you want to wait for clean exit.
+//     }
+// }
+
+// // ---------------------- DevLease ----------------
+
+// pub struct DevLease {
+//     manager: Arc<Mutex<InputStateInner>>, // strong Arc as requested (no shim)
+//     shared_lease_id: SharedLeaseId, // Todo maybe just include an arc instead of the ID as we already are making the arc.
+//     lease_id: LeaseId,
+// }
+
+// impl DevLease {
+//     pub fn set_grabbed(&self, grabbed: bool) {
+//         let mgr = self.manager.lock().unwrap();
+//         if let Some(lease_arc) = mgr.shared_leases.get(&self.shared_lease_id) {
+//             lease_arc.lock().unwrap().set_user_grab(self.lease_id, grabbed);
+//             // update device grabbed state
+//             for dev_arc in mgr.devices.iter() {
+//                 if let Ok(mut dev) = dev_arc.lock() {
+//                     if let Some(larc) = &dev.lease {
+//                         if larc.lock().unwrap().id == self.shared_lease_id {
+//                             dev.update_grabbed_status();
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+//     }
+
+//     pub fn pop_events(&self, max: usize) -> Vec<InputEvent> {
+//         let mgr = self.manager.lock().unwrap();
+//         if let Some(lease_arc) = mgr.shared_leases.get(&self.shared_lease_id) {
+//             return lease_arc.lock().unwrap().pop_events_for(self.lease_id, max);
+//         }
+//         Vec::new()
+//     }
+
+//     pub fn lease_id(&self) -> LeaseId {
+//         return self.lease_id;
+//     }
+//     pub fn shared_lease_id(&self) -> SharedLeaseId {
+//         return self.shared_lease_id;
+//     }
+// }
+
+// impl Drop for DevLease {
+//     fn drop(&mut self) {
+//         println!("Dropped lease! {}", self.lease_id);
+//         let mut mgr = self.manager.lock().unwrap();
+//         // println!("ASD: {}", mgr.shared_leases.len());
+//         if let Some(lease_arc) = mgr.shared_leases.get(&self.shared_lease_id) {
+//             lease_arc.lock().unwrap().remove_user(self.lease_id);
+//             if lease_arc.lock().unwrap().is_empty() {
+//                 // println!("asdasdasdasda");
+//                 // unbind from device (if any) and remove lease
+//                 mgr.unbind_lease_from_device_internal(self.shared_lease_id);
+//                 mgr.orphan_leases.retain(|l| {
+//                     l.lock().unwrap().id != self.shared_lease_id
+//                 });
+//                 // println!("BCC: {:?}", mgr.shared_leases.keys());
+//                 mgr.shared_leases.remove(&self.shared_lease_id);
+//                 // println!("BCC: {:?}", mgr.shared_leases.keys());
+//             }
+//         }
+//     }
+// }
+
+// // Helper method on InputStateInner to unbind a shared lease by id (used in Drop)
+// impl InputStateInner {
+//     fn unbind_lease_from_device_internal(&mut self, lease_id: SharedLeaseId) {
+//         // find any device bound to this lease and clear it, then push lease to orphan list
+//         let mut maybe_lease_arc: Option<Arc<Mutex<SharedLease>>> = None;
+//         for dev_arc in self.devices.iter() {
+//             if let Ok(mut dev) = dev_arc.lock() {
+//                 if let Some(larc) = &dev.lease {
+//                     if let Ok(l) = larc.lock() {
+//                         if l.id == lease_id {
+//                             // remove binding
+//                             maybe_lease_arc = Some(Arc::clone(larc));
+//                         }
+//                     }
+//                 }
+//                 if let Some(larc) = maybe_lease_arc {
+//                     dev.lease = None;
+//                     dev.update_grabbed_status();
+
+//                     println!("REMOVED FROM DEVICE LEASE!");
+//                     if let Ok(mut lease) = larc.lock() {
+//                         lease.assigned_device_path = None;
+//                     }
+//                     self.orphan_leases.push(larc);
+
+//                     break;
+//                 }
+//             }
+//         }
+        
+//     }
+// }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// fastrand::u64(1..);
+type DeviceID = NonZeroU64;
+
+
 
 pub struct InternalDevice {
-    pub path: PathBuf,
-    pub hash: DeviceHash,
-    pub device: Arc<Mutex<Device>>,
-    /// optional bound shared lease
-    pub lease: Option<Arc<Mutex<SharedLease>>>,
-    pub grabbed: bool,
+    pub device_id: Option<DeviceID>,
 
+    pub path: PathBuf,
+    pub device: Device,
+    /// optional bound shared lease
 
     has_button_held: bool,
     latest_gui_pad: Option<PadButton>,
@@ -969,11 +1718,9 @@ pub struct InternalDevice {
 impl InternalDevice {
     fn new(path: PathBuf, dev: Device, hash: DeviceHash) -> Self {
         Self {
+            device_id: None,
             path,
-            hash,
-            device: Arc::new(Mutex::new(dev)),
-            lease: None,
-            grabbed: false,
+            device: dev,
             has_button_held: false,
             latest_gui_pad: None,
         }
@@ -990,7 +1737,7 @@ impl InternalDevice {
 
         if should_grab != self.grabbed {
             if let Ok(mut dev) = self.device.lock() {
-                if should_grab {dev.grab();} else {dev.ungrab();}
+                let _ = if should_grab {dev.grab()} else {dev.ungrab()};
             }
             self.grabbed = should_grab;
         }
@@ -1017,14 +1764,12 @@ impl InternalDevice {
     }
     
 
-    fn name(&self) -> String {
-        let dev = self.device.lock().unwrap();
-        dev.name().unwrap_or_else(|| "").to_string()
+    pub fn name(&self) -> String {
+        self.device.name().unwrap_or_else(|| "").to_string()
     }
     
-    fn device_type(&mut self) -> DeviceType {
-        let dev = self.device.lock().unwrap();
-        let device_type = match dev.supported_keys() {
+    pub fn device_type(&mut self) -> DeviceType {
+        let device_type = match self.device.supported_keys() {
             Some(keys) => {
                 if keys.contains(KeyCode::BTN_SOUTH) {
                     DeviceType::Gamepad
@@ -1041,7 +1786,7 @@ impl InternalDevice {
         device_type
     }
 
-    fn emoji(&mut self) -> String {
+    pub fn emoji(&mut self) -> String {
         match self.device_type() {
             DeviceType::Gamepad => "🎮",
             DeviceType::Keyboard => "🖮",
@@ -1050,13 +1795,12 @@ impl InternalDevice {
         }.to_string()
     }
 
-    fn fancyname(&self) -> String {
+    pub fn fancyname(&self) -> String {
         let name = self.name();
         let name_str = name.as_str();
 
-        let dev = self.device.lock().unwrap();
 
-        match dev.input_id().vendor() {
+        match self.device.input_id().vendor() {
             0x045e => "Xbox Controller",
             0x054c => "PS Controller",
             0x057e => "NT Pro Controller",
@@ -1065,7 +1809,7 @@ impl InternalDevice {
         }.to_string()
     }
 
-    fn path(&self) -> &str {
+    pub fn path(&self) -> &str {
         self.path.to_str().unwrap_or_default()
     }
 
@@ -1082,11 +1826,11 @@ impl InternalDevice {
     }
     
     pub fn enabled(&self, filter: &PadFilterType) -> bool {
-        let dev = self.device.lock().unwrap();
+        let vendor = self.device.input_id().vendor();
         match filter {
             PadFilterType::All => true,
-            PadFilterType::NoSteamInput => dev.input_id().vendor() != 0x28de,
-            PadFilterType::OnlySteamInput => dev.input_id().vendor() == 0x28de,
+            PadFilterType::NoSteamInput => vendor != 0x28de,
+            PadFilterType::OnlySteamInput => vendor == 0x28de,
         }
     }
 
@@ -1144,165 +1888,6 @@ impl InternalDevice {
     pub fn latest_gui_pad(&mut self) -> Option<PadButton> {return self.latest_gui_pad.clone();}
 }
 
-// ---------------------- Manager (InputStateInner) --------------------------
-
-pub struct InputStateInner {
-    pub devices: Vec<Arc<Mutex<InternalDevice>>>,
-    pub shared_leases: HashMap<SharedLeaseId, Arc<Mutex<SharedLease>>>,
-    pub orphan_leases: Vec<Arc<Mutex<SharedLease>>>,
-    pub ctx: egui::Context,
-}
-
-impl InputStateInner {
-    fn new(ctx: egui::Context) -> Self {
-        Self {
-            devices: Vec::new(),
-            shared_leases: HashMap::new(),
-            orphan_leases: Vec::new(),
-            ctx,
-        }
-    }
-
-    /// Try find an unused device that matches the shared lease's hash.
-    fn find_matching_unused_device(&mut self, lease: &SharedLease) -> Option<Arc<Mutex<InternalDevice>>> {
-        let target_hash = compute_device_hash_lease(lease);
-
-        self.devices.iter()
-            .find(|dev_arc| {
-                if let Ok(dev_guard) = dev_arc.lock() {
-                    dev_guard.lease.is_none() && dev_guard.hash == target_hash
-                } else { false }
-            })
-            .cloned()
-    }
-
-    fn bind_lease_to_device(&mut self, lease_arc: &Arc<Mutex<SharedLease>>, dev_arc: &Arc<Mutex<InternalDevice>>) {
-        if let Ok(mut dev) = dev_arc.lock() {
-            dev.lease = Some(Arc::clone(lease_arc));
-            dev.update_grabbed_status();
-            if let Ok(mut lease) = lease_arc.lock() {
-                lease.assigned_device_path = Some(dev.path.clone());
-            }
-        }
-    }
-
-    /// When a device is added: create InternalDevice and attempt to bind a matching orphan lease.
-    fn add_device_obj(&mut self, path: PathBuf, mut dev: Device) {
-        let hash = compute_device_hash_dev(&mut dev);
-        let dev_arc = Arc::new(Mutex::new(InternalDevice::new(path.clone(), dev, hash)));
-        // try to find a matching orphan lease
-        if let Some((idx, lease_arc)) = self.orphan_leases.iter().enumerate()
-            .find(|(_, l)| {
-                if let Ok(lease) = l.lock() {
-                    let target_hash = compute_device_hash_lease(&lease);
-                    target_hash == hash
-                } else { false }
-            })
-            .map(|(i, l)| (i, Arc::clone(l)))
-        {
-            // bind the orphan lease to this device
-            self.bind_lease_to_device(&lease_arc, &dev_arc);
-            // remove from orphan list
-            let _ = self.orphan_leases.swap_remove(idx);
-        }
-        self.devices.push(dev_arc);
-    }
-
-    /// Remove device by path; if bound, make its SharedLease orphaned again.
-    fn remove_device_by_path(&mut self, path: &PathBuf) {
-        if let Some(pos) = self.devices.iter().position(|d| {
-            d.lock().map(|g| g.path == *path).unwrap_or(false)
-        }) {
-            // if bound, orphan the lease
-            if let Ok(mut dev) = self.devices[pos].lock() {
-                if let Some(lease_arc) = dev.lease.take() {
-                    if let Ok(mut lease) = lease_arc.lock() {
-                        lease.assigned_device_path = None;
-                    }
-                    self.orphan_leases.push(lease_arc);
-                }
-            }
-            self.devices.swap_remove(pos);
-        }
-    }
-
-    /// Attempt to bind all orphan leases to available devices.
-
-    fn fix_orphans(&mut self) {
-        let mut i = 0;
-        while i < self.orphan_leases.len() {
-            // Cheaply clone the Arc to end the borrow on `self` immediately
-            let lease_arc = self.orphan_leases[i].clone();
-            
-            let bound = {
-                let lease = lease_arc.lock().unwrap();
-                self.find_matching_unused_device(&lease)
-            };
-            
-            if let Some(dev_arc) = bound {
-                self.bind_lease_to_device(&lease_arc, &dev_arc);
-                let _ = self.orphan_leases.swap_remove(i);
-            } else {
-                i += 1;
-            }
-        }
-    }
-
-    /// Poll devices and dispatch events. This function expects to be called from the input thread.
-    fn poll_and_dispatch(&mut self, monitor_fd: BorrowedFd<'_>) -> Result<(), Box<dyn std::error::Error>> {
-        // Build FD snapshot
-        let mut fds: Vec<(PathBuf, OwnedFd)> = Vec::new();
-        for dev_arc in self.devices.iter() {
-            if let Ok(dev_guard) = dev_arc.lock() {
-                if let Ok(device_guard) = dev_guard.device.lock() {
-                    let fd = dup(device_guard.as_fd())?;
-                    fds.push((dev_guard.path.clone(), fd));
-                }
-            }
-        }
-
-        // Build poll vector: optional monitor fd first
-        let mut poll_fds: Vec<PollFd> = Vec::new();
-        poll_fds.push(PollFd::new(monitor_fd, PollFlags::POLLIN));
-
-        for &(_, ref fd) in fds.iter() {
-            poll_fds.push(PollFd::new(fd.as_fd(), PollFlags::POLLIN));
-        }
-
-        // Blocking poll with timeout
-        let _ = poll(&mut poll_fds, PollTimeout::try_from(POLL_TIMEOUT_MS as i32)?)?;
-
-
-        // For devices that fired, map index -> path and dispatch
-        for (idx, poll_fd) in poll_fds.iter().enumerate().skip(1) { // Skip monitor FD
-            if let Some(revents) = poll_fd.revents() {
-                if revents.intersects(PollFlags::POLLIN | PollFlags::POLLERR | PollFlags::POLLHUP) {
-                    // map idx-device_start_idx -> fds index
-                    let fds_idx = idx - 1; // Skip monitor FD
-                    if let Some((path, _fd)) = fds.get(fds_idx) {
-                        // find device entry by path and dispatch
-                        if let Some(dev_arc) = self.devices.iter().find(|d| d.lock().map(|g| g.path == *path).unwrap_or(false)).cloned() {
-                            if let Ok(mut dev) = dev_arc.lock() {
-                                if dev.fetch_and_dispatch_events(&self.ctx).is_err() {
-                                    // device failed: remove
-                                    let p = dev.path.clone();
-                                    drop(dev);
-                                    self.remove_device_by_path(&p);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        thread::sleep_ms(10);
-
-        Ok(())
-    }
-}
-
-// ---------------------- Public wrapper --------------------------
 
 pub struct InputState {
     inner: Arc<Mutex<InputStateInner>>,
@@ -1374,8 +1959,59 @@ impl InputState {
                 // Poll + dispatch (we lock inner inside)
 
                 // THIS IS THE LOCKING BUG DAVID TODO: FIX!
+
+                let mut fds: Vec<(PathBuf, OwnedFd)> = Vec::new();
+                let mut poll_fds: Vec<PollFd> = Vec::new();
+
+                if let Ok(guard) = thread_inner.lock() {
+                    // Build FD snapshot
+                    for dev_arc in guard.devices.iter() {
+                        if let Ok(dev_guard) = dev_arc.lock() {
+                            if let Ok(device_guard) = dev_guard.device.lock() {
+                                let fd = dup(device_guard.as_fd()).unwrap();
+                                fds.push((dev_guard.path.clone(), fd));
+                            }
+                        }
+                    }
+
+                    // Build poll vector: optional monitor fd first
+                    poll_fds.push(PollFd::new(monitor_fd, PollFlags::POLLIN));
+
+                    for &(_, ref fd) in fds.iter() {
+                        poll_fds.push(PollFd::new(fd.as_fd(), PollFlags::POLLIN));
+                    }
+
+                    // Blocking poll with timeout
+                }
+
+                let _ = poll(&mut poll_fds, PollTimeout::try_from(POLL_TIMEOUT_MS as i32).unwrap()).unwrap();
+
+
                 if let Ok(mut guard) = thread_inner.lock() {
-                    let _ = guard.poll_and_dispatch(monitor_fd);
+
+                    // For devices that fired, map index -> path and dispatch
+                    for (idx, poll_fd) in poll_fds.iter().enumerate().skip(1) { // Skip monitor FD
+                        if let Some(revents) = poll_fd.revents() {
+                            if revents.intersects(PollFlags::POLLIN | PollFlags::POLLERR | PollFlags::POLLHUP) {
+                                // map idx-device_start_idx -> fds index
+                                let fds_idx = idx - 1; // Skip monitor FD
+                                if let Some((path, _fd)) = fds.get(fds_idx) {
+                                    // find device entry by path and dispatch
+                                    if let Some(dev_arc) = guard.devices.iter().find(|d| d.lock().map(|g| g.path == *path).unwrap_or(false)).cloned() {
+                                        if let Ok(mut dev) = dev_arc.lock() {
+                                            if dev.fetch_and_dispatch_events(&guard.ctx).is_err() {
+                                                // device failed: remove
+                                                let p = dev.path.clone();
+                                                drop(dev);
+                                                guard.remove_device_by_path(&p);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // fix orphans (in case new devices bound)
                     guard.fix_orphans();
                 }
@@ -1390,213 +2026,3 @@ impl InputState {
             _thread: thread,
         })
     }
-
-    /// Create or reuse a shared lease and return a DevLease handle.
-    pub fn new_dev_lease(
-        &self,
-        requested_shared_id: Option<SharedLeaseId>,
-        dev_name: String,
-        dev_input_id: InputId,
-        dev_unique_name: String,
-        viewport: egui::ViewportId,
-        grabbed: bool,
-    ) -> DevLease {
-        let lease_arc: Arc<Mutex<SharedLease>>;
-        let lease_id = self.latest_lease_id.fetch_add(1, Ordering::SeqCst);
-
-        {
-            let mut inner = self.inner.lock().unwrap();
-
-            // Try requested id
-            if let Some(req_id) = requested_shared_id {
-                if let Some(existing) = inner.shared_leases.get(&req_id) {
-                    lease_arc = Arc::clone(existing);
-                } else {
-                    // not found; create new below
-                    let new_shared_id = self.latest_shared_lease_id.fetch_add(1, Ordering::SeqCst);
-                    let s = SharedLease::new(new_shared_id, dev_name.clone(), dev_input_id.clone(), dev_unique_name.clone());
-                    let s_arc = Arc::new(Mutex::new(s));
-                    inner.shared_leases.insert(new_shared_id, Arc::clone(&s_arc));
-                    inner.orphan_leases.push(Arc::clone(&s_arc));
-                    lease_arc = s_arc;
-                }
-            } else {
-                // find existing match by metadata
-                if let Some((_, existing)) = inner.shared_leases.iter()
-                    .find(|(_, arc)| {
-                        if let Ok(l) = arc.lock() {
-                            l.dev_name == dev_name && l.dev_unique_name == dev_unique_name && l.dev_input_id == dev_input_id
-                        } else { false }
-                    }) {
-                    lease_arc = Arc::clone(existing);
-                } else {
-                    // create new shared lease
-                    let new_shared_id = self.latest_shared_lease_id.fetch_add(1, Ordering::SeqCst);
-                    let s = SharedLease::new(new_shared_id, dev_name.clone(), dev_input_id.clone(), dev_unique_name.clone());
-                    let s_arc = Arc::new(Mutex::new(s));
-                    inner.shared_leases.insert(new_shared_id, Arc::clone(&s_arc));
-                    inner.orphan_leases.push(Arc::clone(&s_arc));
-                    lease_arc = s_arc;
-                }
-            }
-
-            // register user
-            let mut lease = lease_arc.lock().unwrap();
-            lease.add_user(lease_id, viewport, grabbed);
-
-            // attempt immediate binding
-            inner.fix_orphans();
-        }
-
-        DevLease {
-            manager: Arc::clone(&self.inner),
-            shared_lease_id: lease_arc.lock().unwrap().id,
-            lease_id,
-        }
-    }
-
-    pub fn new_dev_lease_from_dev(
-        &self,
-        dev: &mut InternalDevice,
-        viewport: egui::ViewportId,
-        grabbed: bool,
-    ) -> DevLease {
-        let lease_id = self.latest_lease_id.fetch_add(1, Ordering::SeqCst);
-
-        if let Some(lease) = &dev.lease {
-            let mut locked_shared_lease = lease.lock().unwrap();
-            locked_shared_lease.add_user(lease_id, viewport, grabbed);
-
-            return DevLease { manager: self.inner.clone(), shared_lease_id: locked_shared_lease.id, lease_id };
-        } else {
-            let mut inner = self.inner.lock().unwrap();
-
-            let new_shared_id = self.latest_shared_lease_id.fetch_add(1, Ordering::SeqCst);
-            
-            let device_locked = dev.device.lock().unwrap();
-
-            let sh_lease = SharedLease::new(
-                new_shared_id, 
-                device_locked.name().unwrap_or("UNKNOWN").to_string(), 
-                device_locked.input_id(), 
-                device_locked.unique_name().unwrap_or("UNKNOWN").to_string()
-            );
-            
-            let sh_lease_arc = Arc::new(Mutex::new(sh_lease));
-            inner.shared_leases.insert(new_shared_id, Arc::clone(&sh_lease_arc));
-
-            dev.lease = Some(sh_lease_arc);
-
-            return DevLease { manager: self.inner.clone(), shared_lease_id: new_shared_id, lease_id };
-        }
-    }
-
-    pub fn fix_orphans(&self) {
-        if let Ok(mut inner) = self.inner.lock() {
-            inner.fix_orphans();
-        }
-    }
-
-    pub fn get_shared_lease(&self, id: SharedLeaseId) -> Option<Arc<Mutex<SharedLease>>> {
-        self.inner.lock().unwrap().shared_leases.get(&id).cloned()
-    }
-
-    pub fn devices(&self) -> Vec<Arc<Mutex<InternalDevice>>> {
-        self.inner.lock().unwrap().devices.clone()
-    }
-}
-
-impl Drop for InputState {
-    fn drop(&mut self) {
-        let _ = self.shutdown_tx.send(());
-        // join thread is not required here; handle if you want to wait for clean exit.
-    }
-}
-
-// ---------------------- DevLease ----------------
-
-pub struct DevLease {
-    manager: Arc<Mutex<InputStateInner>>, // strong Arc as requested (no shim)
-    shared_lease_id: SharedLeaseId, // Todo maybe just include an arc instead of the ID as we already are making the arc.
-    lease_id: LeaseId,
-}
-
-impl DevLease {
-    pub fn set_grabbed(&self, grabbed: bool) {
-        let mgr = self.manager.lock().unwrap();
-        if let Some(lease_arc) = mgr.shared_leases.get(&self.shared_lease_id) {
-            lease_arc.lock().unwrap().set_user_grab(self.lease_id, grabbed);
-            // update device grabbed state
-            for dev_arc in mgr.devices.iter() {
-                if let Ok(mut dev) = dev_arc.lock() {
-                    if let Some(larc) = &dev.lease {
-                        if larc.lock().unwrap().id == self.shared_lease_id {
-                            dev.update_grabbed_status();
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn pop_events(&self, max: usize) -> Vec<InputEvent> {
-        let mgr = self.manager.lock().unwrap();
-        if let Some(lease_arc) = mgr.shared_leases.get(&self.shared_lease_id) {
-            return lease_arc.lock().unwrap().pop_events_for(self.lease_id, max);
-        }
-        Vec::new()
-    }
-
-    pub fn lease_id(&self) -> LeaseId {
-        return self.lease_id;
-    }
-    pub fn shared_lease_id(&self) -> SharedLeaseId {
-        return self.shared_lease_id;
-    }
-}
-
-impl Drop for DevLease {
-    fn drop(&mut self) {
-        let mut mgr = self.manager.lock().unwrap();
-        if let Some(lease_arc) = mgr.shared_leases.get(&self.shared_lease_id) {
-            lease_arc.lock().unwrap().remove_user(self.lease_id);
-            if lease_arc.lock().unwrap().is_empty() {
-                // unbind from device (if any) and remove lease
-                mgr.unbind_lease_from_device_internal(self.shared_lease_id);
-                mgr.shared_leases.remove(&self.shared_lease_id);
-            }
-        }
-    }
-}
-
-// Helper method on InputStateInner to unbind a shared lease by id (used in Drop)
-impl InputStateInner {
-    fn unbind_lease_from_device_internal(&mut self, lease_id: SharedLeaseId) {
-        // find any device bound to this lease and clear it, then push lease to orphan list
-        let mut maybe_lease_arc: Option<Arc<Mutex<SharedLease>>> = None;
-        for dev_arc in self.devices.iter() {
-            if let Ok(mut dev) = dev_arc.lock() {
-                if let Some(larc) = &dev.lease {
-                    if let Ok(l) = larc.lock() {
-                        if l.id == lease_id {
-                            // remove binding
-                            maybe_lease_arc = Some(Arc::clone(larc));
-                        }
-                    }
-                }
-                // Removing binding p2
-                if maybe_lease_arc.is_some() {
-                    dev.lease = None;
-                    dev.update_grabbed_status();
-                    break;
-                }
-            }
-        }
-        if let Some(larc) = maybe_lease_arc {
-            if let Ok(mut lease) = larc.lock() {
-                lease.assigned_device_path = None;
-            }
-            self.orphan_leases.push(larc);
-        }
-    }
-}

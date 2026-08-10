@@ -246,7 +246,6 @@ impl InstancesScreen {
             .filter(|profile| !used_by_others.contains(*profile))
             .cloned()
             .collect();
-        let allow_multiple = state.options.allow_multiple_instances_on_same_device;
 
         egui::Modal::new(ui.make_persistent_id("setup_instance_edit_modal")).show(ui.ctx(), |ui| {
             if ui.button("Close").clicked() {
@@ -290,22 +289,18 @@ impl InstancesScreen {
             ui.separator();
 
 
-            // TODO REPLACE TEMP CODE!!!!
-            // state.input_state.devices().
+            let mut remove_device = None;
 
-
-            // let others_leases = state.input_state.leases().lock().unwrap().iter().filter(|lease| 
-            //     !instance.devices.iter().any(|my_lease| Arc::ptr_eq(&my_lease.inner(), lease))
-            // ).collect::<Vec>();
-
-
-            for device_arc in state.input_state.devices().iter() {
-
+            for device_arc in state.input_state.devices().iter() {                
                 let mut device = device_arc.lock().unwrap();
+
+                if device.device_type() == DeviceType::Other {continue;}
+
                 let is_held = device.has_button_held();
                 let (used_by_others, used_by_me, shared_device_lease_id) = if let Some(shared_lease_lock) = &device.lease {
                     let shared_lease = shared_lease_lock.lock().unwrap();
 
+                    // println!("asd: {:?}, {}", shared_lease.users_info.keys(), instance.devices.len());
                     let used_by_me = shared_lease.users_info.keys().any(|user| {
                         instance.devices.iter().any(|my_lease| {
                             my_lease.lease_id() == *user
@@ -317,6 +312,7 @@ impl InstancesScreen {
                             my_lease.lease_id() == *user
                         })
                     });
+                    // println!("used_by_others: {}", used_by_others);
 
                     (used_by_others, used_by_me, Some(shared_lease.id))
                 } else {
@@ -330,36 +326,44 @@ impl InstancesScreen {
                 let checked_before = checked;
 
                 let dev_text =
-                    RichText::new(&device.label()).small().color(device_text_color(is_enabled, is_held, used_by_me));
+                    RichText::new(&device.label()).small().color(device_text_color(is_enabled, is_held, used_by_others));
 
                 let response = ui
                     .add_enabled(is_enabled, egui::Checkbox::new(&mut checked, dev_text))
-                    .on_hover_text(device_hover_text(is_enabled, is_held, used_by_me));
+                    .on_hover_text(device_hover_text(is_enabled, is_held, used_by_others));
 
                 if response.changed() {
                     match (checked, checked_before) {
                         (true, false) => instance.devices.push(state.input_state.new_dev_lease_from_dev(&mut device, ViewportId::ROOT, false)),
-                        (false, true) => instance.devices.retain(|device| {
-                            // Shouldnt be possible for it to be none here.
-                            shared_device_lease_id.is_none() || Some(device.shared_lease_id()) != shared_device_lease_id
-                        }),
+                        (false, true) => remove_device=shared_device_lease_id,
                         _ => {}
                     }
+                    // println!("{:?}", instance.devices.len());
                 }
             }
+
+            if let Some(device_to_remove) = remove_device {
+                instance.devices.retain(|device| {
+                    device.shared_lease_id() != device_to_remove
+                })
+            }
+
+
+            
+            for device_arc in instance.devices.iter().filter(|d| {
+                state.input_state.is_orphan(d.shared_lease_id())
+            }) {
+                // instance.devices.iter()
+                device_arc.
+            }
+
+
+
         });
     }
 
 }
 
-fn device_assignable(
-    enabled: bool,
-    used_by_other: bool,
-    allow_multiple: bool,
-) -> bool {
-    let not_duplicate = !used_by_other || allow_multiple;
-    enabled && not_duplicate
-}
 
 fn device_text_color(enabled: bool, pressed: bool, already_used: bool) -> Color32 {
     match (enabled, pressed, already_used) {

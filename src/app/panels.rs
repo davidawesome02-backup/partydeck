@@ -5,6 +5,7 @@ use crate::app::screens::{NavTab, Route};
 use crate::app::state::{AppState, Mode};
 use crate::app::toasts::Severity;
 use crate::handler::{Handler, import_pd2};
+use crate::input::DeviceType;
 use crate::util::open_dir;
 
 pub fn top_panel(state: &mut AppState, tab: Option<NavTab>, ui: &mut Ui) {
@@ -180,6 +181,9 @@ pub fn right_panel(state: &mut AppState, ui: &mut Ui) {
 
     for dev in state.input_state.devices().iter_mut() {
         let mut lock_dev = dev.lock().unwrap();
+
+        if lock_dev.device_type() == DeviceType::Other {continue;}
+
         
         let mut dev_text = RichText::new(lock_dev.label()).small();
 
