@@ -179,17 +179,15 @@ pub fn right_panel(state: &mut AppState, ui: &mut Ui) {
     ui.heading("Devices");
     ui.separator();
 
-    for dev in state.input_state.devices().iter_mut() {
-        let mut lock_dev = dev.lock().unwrap();
-
-        if lock_dev.device_type() == DeviceType::Other {continue;}
+    for dev in state.input_state.inner().devices.values_mut() {
+        if dev.device_type() == DeviceType::Other {continue;}
 
         
-        let mut dev_text = RichText::new(lock_dev.label()).small();
+        let mut dev_text = RichText::new(dev.label()).small();
 
-        if !lock_dev.enabled(&state.options.pad_filter_type) {
+        if !dev.enabled(&state.options.pad_filter_type) {
             dev_text = dev_text.weak();
-        } else if lock_dev.has_button_held() {
+        } else if dev.has_button_held() {
             dev_text = dev_text.strong();
         }
 

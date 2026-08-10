@@ -8,7 +8,7 @@ use std::sync::{Arc, RwLock, Mutex};
 use eframe::egui::{self, Color32};
 
 use crate::handler::Handler;
-use crate::input::DevLease;
+use crate::input::DeviceRefrence;
 use crate::layout::{Layout, WindowPosition};
 use crate::monitor::Monitor;
 use crate::profiles::next_temp_name;
@@ -78,7 +78,7 @@ pub struct InstanceSpecificHandler {
 
 pub struct Instance {
     pub id: InstanceId,
-    pub devices: Vec<DevLease>,
+    pub devices: Vec<DeviceRefrence>,
     pub profname: String,
     pub color: Color32,
     pub handler: InstanceSpecificHandler,

@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use eframe::egui::{self, Color32, RichText, Ui, ViewportId};
@@ -6,7 +7,7 @@ use crate::app::config::save_cfg;
 use crate::app::screens::{Panels, Route, Screen};
 use crate::app::events::spawn_launch_worker;
 use crate::app::state::AppState;
-use crate::input::{DeviceType};
+use crate::input::{DeviceRefrence, DeviceType};
 use crate::launch::LaunchPlan;
 use crate::layout::LayoutKind;
 use crate::profiles::{next_temp_name, scan_profiles};
@@ -289,34 +290,24 @@ impl InstancesScreen {
             ui.separator();
 
 
-            let mut remove_device = None;
+            let mut device_add_remove = None;
 
-            for device_arc in state.input_state.devices().iter() {                
-                let mut device = device_arc.lock().unwrap();
+            let mut input_state = state.input_state.inner();
+            for (dev_path, device) in input_state.devices.iter() {
 
                 if device.device_type() == DeviceType::Other {continue;}
 
                 let is_held = device.has_button_held();
-                let (used_by_others, used_by_me, shared_device_lease_id) = if let Some(shared_lease_lock) = &device.lease {
-                    let shared_lease = shared_lease_lock.lock().unwrap();
 
-                    // println!("asd: {:?}, {}", shared_lease.users_info.keys(), instance.devices.len());
-                    let used_by_me = shared_lease.users_info.keys().any(|user| {
-                        instance.devices.iter().any(|my_lease| {
-                            my_lease.lease_id() == *user
-                        })
-                    });
+                
 
-                    let used_by_others = shared_lease.users_info.keys().any(|user| {
-                        !instance.devices.iter().any(|my_lease| {
-                            my_lease.lease_id() == *user
-                        })
-                    });
-                    // println!("used_by_others: {}", used_by_others);
+                let (used_by_others, used_by_me) = if let Some(device_id) = device.device_id && let Some(target) = input_state.targets.get(&device_id) {
+                    let used_by_me = target.users.keys().any(|dev_user| instance.devices.iter().any(|my_user| my_user.user_id == *dev_user));
+                    let used_by_others = target.users.keys().any(|dev_user| !instance.devices.iter().any(|my_user| my_user.user_id == *dev_user));
 
-                    (used_by_others, used_by_me, Some(shared_lease.id))
+                    (used_by_others, used_by_me)
                 } else {
-                    (false, false, None)
+                    (false, false)
                 };
 
                 let is_enabled = device.enabled(&state.options.pad_filter_type) && (!used_by_others || state.options.allow_multiple_instances_on_same_device);
@@ -333,29 +324,57 @@ impl InstancesScreen {
                     .on_hover_text(device_hover_text(is_enabled, is_held, used_by_others));
 
                 if response.changed() {
-                    match (checked, checked_before) {
-                        (true, false) => instance.devices.push(state.input_state.new_dev_lease_from_dev(&mut device, ViewportId::ROOT, false)),
-                        (false, true) => remove_device=shared_device_lease_id,
-                        _ => {}
+                    if checked != checked_before {
+                        device_add_remove = Some((checked, device.device_id, dev_path.clone()))
                     }
-                    // println!("{:?}", instance.devices.len());
                 }
             }
 
-            if let Some(device_to_remove) = remove_device {
-                instance.devices.retain(|device| {
-                    device.shared_lease_id() != device_to_remove
-                })
+
+            let orphaned_devices = instance.devices.iter().filter(|my_dev| !input_state.devices.values().any(|dev| {dev.device_id == Some(my_dev.device_id)}));
+            for orphaned_device in orphaned_devices {
+                let Some(target) = input_state.targets.get(&orphaned_device.device_id) else {continue};
+
+                // target.target_name
+                let dev_text =
+                    RichText::new(format!("Missing - {}", target.target_name)).small().color(egui::Color32::LIGHT_GREEN);
+
+                let mut checked = true;
+                let _ = ui
+                    .add_enabled(true, egui::Checkbox::new(&mut checked, dev_text))
+                    .on_hover_text(format!("This device was selected at one point, but is now unavailable with no suitable replacement found. Hash: {:016X}",target.target_hash));
+
+                if !checked {
+                    device_add_remove = Some((false, Some(orphaned_device.device_id), PathBuf::default()))
+                }
+            }//input_state.
+            
+
+            if let Some(device_data) = device_add_remove {
+                if device_data.0 { // Add
+                    if let Ok(new_dev) = DeviceRefrence::new(&mut input_state, device_data.2) {
+                        instance.devices.push(new_dev)
+                    }
+                } else { // Remove
+                    if let Some(device_remove_id) = device_data.1 {
+                        instance.devices.retain_mut(|my_device| {
+                            let removed = my_device.device_id == device_remove_id;
+                            if removed {my_device.pre_drop(&mut input_state);}
+
+                            !removed
+                        })
+                    }
+                }
             }
 
 
             
-            for device_arc in instance.devices.iter().filter(|d| {
-                state.input_state.is_orphan(d.shared_lease_id())
-            }) {
-                // instance.devices.iter()
-                device_arc.
-            }
+            // for device_arc in instance.devices.iter().filter(|d| {
+            //     state.input_state.is_orphan(d.shared_lease_id())
+            // }) {
+            //     // instance.devices.iter()
+            //     device_arc.
+            // }
 
 
 
