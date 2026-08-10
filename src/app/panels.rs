@@ -192,7 +192,18 @@ pub fn right_panel(state: &mut AppState, ui: &mut Ui) {
             dev_text = dev_text.strong();
         }
 
-        ui.label(dev_text);
+
+        ui.label(dev_text).on_hover_text(
+            format!("Usage count: {}\nFancy name: {}\nHash: {:016X}\nName: {:#?}\nPath: {}\nInputID: {:#?}\nUnique Name: {:#?}", 
+                dev.device_id.and_then(|id| input_state.targets.get(&id)).and_then(|tar| Some(tar.users.len().to_string())).unwrap_or("Unused".to_string()),
+                dev.fancyname(),
+                dev.hash, 
+                dev.device.name(),
+                dev.path.to_string_lossy(), 
+                dev.device.input_id(),
+                dev.device.unique_name()
+            )
+        );
     }
 
     let orphaned_devs = input_state.targets.values().filter(|target| !input_state.devices.values().any(|dev| dev.device_id == Some(target.device_id))).collect::<Vec<_>>();
@@ -200,7 +211,13 @@ pub fn right_panel(state: &mut AppState, ui: &mut Ui) {
     
     for dev in orphaned_devs {
         let dev_text = RichText::new(format!("Missing - {}", dev.target_name)).small().weak().color(Color32::LIGHT_GREEN);
-        ui.label(dev_text);
+        ui.label(dev_text).on_hover_text(
+            format!("Usage count: {}\nFancy name: {}\nHash: {:016X}",
+                input_state.targets.get(&dev.device_id).and_then(|tar| Some(tar.users.len().to_string())).unwrap_or("Unused".to_string()),
+                dev.target_name,
+                dev.target_hash
+            )
+        );
     }
 
     ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
