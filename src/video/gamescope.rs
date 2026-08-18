@@ -166,6 +166,19 @@ impl GamescopeWaylandState {
         Ok(())
     }
 
+    pub fn set_size(&mut self, nested: Vec2, internal: Vec2) -> Result<(), String> {
+        let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
+        input_interface.set_output_size(
+            nested.x as u32,
+            nested.y as u32,
+            internal.x as u32,
+            internal.y as u32
+        );
+        self.has_data_to_send = true;
+
+        Ok(())
+    }
+
     pub fn send_key(&mut self, key: u32, down: bool) -> Result<(), String> {
         let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
 
@@ -343,6 +356,8 @@ impl InstanceStreamView {
         }
 
         self.last_pointer_pos = current_pointer_pos;
+        // if self.wayland_state.latest_output_size
+        // self.wayland_state.set_size(desired_size, desired_size)?;
         self.wayland_state.round_trip()?; // Only runs if we actually updated anything.
 
         Ok(response)

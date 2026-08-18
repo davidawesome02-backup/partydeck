@@ -5,6 +5,7 @@ use rfd::FileDialog;
 use std::error::Error;
 use std::fs::{self, File};
 use std::io;
+use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use zip::ZipWriter;
@@ -326,4 +327,21 @@ pub fn next_instance_color(used: &[Color32]) -> Color32 {
         .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
         .unwrap()
         .1
+}
+
+
+pub struct ChildContainer(std::process::Child);
+impl ChildContainer {
+    pub fn new(c: std::process::Child) -> Self {
+        Self(c)
+    }
+    pub fn refr(&mut self) -> &mut std::process::Child {
+        &mut self.0
+    }
+}
+impl Drop for ChildContainer {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }

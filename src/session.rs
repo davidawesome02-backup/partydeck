@@ -12,10 +12,10 @@ use crate::input::DeviceRefrence;
 use crate::layout::{Layout, WindowPosition};
 use crate::monitor::Monitor;
 use crate::profiles::next_temp_name;
-use crate::util::next_instance_color;
+use crate::util::{ChildContainer, next_instance_color};
 use crate::video::egl::EglApi;
 use crate::video::gamescope::{GamescopeWaylandState, InstanceStreamView};
-use crate::video::pipewire::{PipewireCommand, PipewireID, PipewireStream};
+use crate::video::pipewire::{PipewireCommand, PipewireID, PipewireInstance, PipewireStream};
 use pipewire as pw;
 
 use std::time::{Duration, Instant};
@@ -35,7 +35,7 @@ pub struct InstanceLaunched {
     pub last_error_dont_retry: Option<InstanceLaunchedStatus>,
 
     pub start_instant: Instant, // Time to wait for to start gamescope. (any time past this we are running)
-    pub gamescope_proc: Option<(Child, OwnedFd, Instant)>,
+    pub gamescope_proc: Option<(ChildContainer, OwnedFd, Instant)>,
     pub stream_view: Option<InstanceStreamView>,
 
 
@@ -44,6 +44,8 @@ pub struct InstanceLaunched {
     pub pw_streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<PipewireStream>>>>>,
     pub ctx: egui::Context,
     pub viewport_id: egui::ViewportId,
+
+    pub starting_position: WindowPosition,
 }
 
 #[derive(PartialEq)]
@@ -162,7 +164,7 @@ impl Instance {
         action
     }
 
-    pub fn start_instance(&mut self, next_timeout: &mut Instant, upper_launch_data: &DisplayLaunched) {
+    pub fn start_instance(&mut self, next_timeout: &mut Instant, upper_launch_data: &DisplayLaunched, position: WindowPosition) {
         if self.launch_data.is_some() {return;}
 
 
@@ -177,6 +179,8 @@ impl Instance {
             ctx: upper_launch_data.ctx.clone(),
             viewport_id: upper_launch_data.viewport_id.clone(),
             stream_view: None,
+
+            starting_position: position
         });
 
         if let Some(delay) = self.handler.pause_between_starts {
@@ -198,12 +202,19 @@ impl Instance {
 
                 let update_response = self.post_launch_update();
                 if update_response != InstanceLaunchedStatus::Ready {
+                    if matches!(update_response, InstanceLaunchedStatus::StartTimeout(_) | InstanceLaunchedStatus::WaitingFD) {
+                        ui.request_repaint_after_secs(0.1);
+                    }
+
                     ui.centered_and_justified(|ui| ui.label(update_response.to_string()));
                     return;
                 }
 
                 // TODO REPLACE WITH REAL DRAW CALLS!
-                ui.centered_and_justified(|ui| ui.label("READY!!"));
+                // ui.centered_and_justified(|ui| ui.label("READY!!"));
+                if let Some(a) = &mut self.launch_data && let Some(b) = &mut a.stream_view {
+                    let _ = b.ui(ui, egui::Vec2::new(ui.available_width(), ui.available_height())).inspect_err(|e| eprintln!("Ignoring error: {e}"));
+                }
 
         });
     }
@@ -237,7 +248,7 @@ impl Instance {
 
         let Some(ref mut launch_proc) = launch_data.gamescope_proc else {return InstanceLaunchedStatus::Failed;};
 
-        if !matches!(launch_proc.0.try_wait(), Ok(None)) {
+        if !matches!(launch_proc.0.refr().try_wait(), Ok(None)) {
             launch_data.last_error_dont_retry = Some(InstanceLaunchedStatus::Exited);
             return InstanceLaunchedStatus::Exited;
         }
@@ -336,26 +347,41 @@ impl Instance {
         let (ready_read, ready_write) = nix::unistd::pipe().map_err(|e| format!("Pipe creation error: {e}"))?;
         let mut cmd = Command::new("gamescope");
         cmd.args(["-R", &format!("/proc/self/fd/{}", ready_write.as_raw_fd())]);
-        cmd.args(["--force-windows-fullscreen", "konsole"]);
+        cmd.args(["--composite-cursor", "--force-windows-fullscreen", "--nested-follow-window-scale", "1"]);
+        cmd.args(["-W", &launch_data.starting_position.w.to_string(), "-w", &launch_data.starting_position.w.to_string()]);
+        cmd.args(["-H", &launch_data.starting_position.h.to_string(), "-h", &launch_data.starting_position.h.to_string()]);
+        cmd.args(["--backend", "headless"]);
+        cmd.args(["--", "konsole"]);
 
         let child = cmd.spawn().map_err(|e| format!("Spawn error: {e}"))?;
 
-        launch_data.gamescope_proc = Some((child, ready_read, now+Duration::from_secs(5)));
+        launch_data.gamescope_proc = Some((ChildContainer::new(child), ready_read, now+Duration::from_secs(5)));
 
         Ok(())
+    }
+
+    pub fn is_alive_or_starting(&mut self) -> bool {
+        let Some(ref mut ld) = self.launch_data else {return true};
+        let Some(ref mut prgm) = ld.gamescope_proc else {return true};
+        prgm.0.refr().try_wait().unwrap().is_none()
+    }
+
+    pub fn kill_game(&mut self) {
+        let Some(ref mut ld) = self.launch_data else {return};
+        ld.last_error_dont_retry = Some(InstanceLaunchedStatus::Exited);
+
+        let Some(ref mut prgm) = ld.gamescope_proc else {return};
+        let _ = prgm.0.refr().kill();
     }
 }
 
 
 pub struct DisplayLaunched {
-    pub monitor: Monitor,
-
     pub egl: Arc<EglApi>,
     pub pw_sender: pw::channel::Sender<PipewireCommand>,
     pub pw_streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<PipewireStream>>>>>,
     pub ctx: egui::Context,
     pub viewport_id: egui::ViewportId,
-    pub fullscreen: bool,
 }
 
 #[derive(Default)]
@@ -400,19 +426,18 @@ impl Display {
         action
     }
 
-    #[allow(unused)]
-    pub fn start_display(&self, monitor: Monitor, ui: &mut egui::Ui, next_timeout: &mut Instant) {
+    pub fn start_display(&mut self, ui: &mut egui::Ui, next_timeout: &mut Instant, viewport_id: egui::ViewportId, egl: Arc<EglApi>, pw: &PipewireInstance, mon: Monitor) {
         let new_launch_data = DisplayLaunched {
-            monitor: monitor,
-            egl: todo!(),
-            pw_sender: todo!(),
-            pw_streams: todo!(),
+            egl: egl,
+            pw_sender: pw.channel.clone(),
+            pw_streams: pw.streams.clone(),
             ctx: ui.ctx().clone(),
-            viewport_id: egui::ViewportId::from_hash_of(("session-display", monitor.name())),
-            fullscreen: true,
+            viewport_id,
         };
 
-        self.instances.iter_mut().for_each(|inst| inst.start_instance(next_timeout, &new_launch_data));
+        let layout = self.window_positions(mon.width(), mon.height());
+
+        self.instances.iter_mut().zip(layout).for_each(|(inst, position)| inst.start_instance(next_timeout, &new_launch_data, position));
 
         self.launch_data = Some(new_launch_data);
 
@@ -420,43 +445,36 @@ impl Display {
         // *next_timeout+=Duration::from_secs(5);
     }
 
-    #[allow(unused)]
-    pub fn container_ui(&self, arc_self: Arc<std::sync::Mutex<Self>>, ui: &mut egui::Ui) {
-        let Some(ref launch_data) = self.launch_data else {return;};
-        let monitor = &launch_data.monitor;
-        ui.ctx().show_viewport_deferred(
-            launch_data.viewport_id,
-            egui::ViewportBuilder::default()
-                .with_title(format!("PartyDeck - {}", monitor.name()))
-                .with_monitor_name(monitor.name())
-                .with_fullscreen(launch_data.fullscreen),
-            move |ui, _class| {
-                egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
-                    arc_self.lock().unwrap().display_ui(ui); // TODO fix.
-                });
-            },
-        );
+
+    pub fn display_ui(&mut self, ui: &mut egui::Ui) {
+        let height = ui.available_height();
+        let width = ui.available_width();
+        let pixels_scale = ui.pixels_per_point();
+        let target_res = ((width * pixels_scale) as u32, (height * pixels_scale) as u32); // TODO replace *10 with proper sizing stuff egui scale. We should use the display ratio [see cursor egui input], but for now just using big number.
+        let top_left_cursor = ui.cursor().left_top().to_vec2();
+        let layout = self.window_positions(target_res.0, target_res.1);
+
+        for (instance_idx, window) in layout.iter().enumerate() {
+            let instance = &mut self.instances[instance_idx];
+            let tile_rect = egui::Rect::from_min_size(
+                egui::pos2(
+                    window.x as f32 * width / target_res.0 as f32,
+                    window.y as f32 * height / target_res.1 as f32,
+                ) + top_left_cursor,
+                egui::vec2(
+                    window.w as f32 * width / target_res.0 as f32,
+                    window.h as f32 * height / target_res.1 as f32,
+                ),
+            );
+
+            instance.running_ui(ui, tile_rect);
+        }
     }
 
-    fn display_ui(&self, ui: &mut egui::Ui) {
-    //     let top_left_cursor = ui.cursor().left_top().to_vec2();
-    //     let layout = self.window_positions(target_res.0, target_res.1);
-    //     let mut action: InstanceAction = InstanceAction::None;
-    //     for (instance_idx, window) in layout.iter().enumerate() {
-    //         let instance = &mut self.instances[instance_idx];
-    //         let tile_rect = egui::Rect::from_min_size(
-    //             egui::pos2(
-    //                 window.x as f32 * width / target_res.0 as f32,
-    //                 window.y as f32 * height / target_res.1 as f32,
-    //             ) + top_left_cursor,
-    //             egui::vec2(
-    //                 window.w as f32 * width / target_res.0 as f32,
-    //                 window.h as f32 * height / target_res.1 as f32,
-    //             ),
-    //         );
-
-    //         instance.running_ui(ui, tile_rect);
-    //     }
+    pub fn is_alive(&mut self) -> bool {
+        self.instances.iter_mut().any(|i| {
+            i.is_alive_or_starting()
+        })
     }
 }
 

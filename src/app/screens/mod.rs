@@ -22,6 +22,7 @@ use super::state::AppState;
 use crate::handler::Handler;
 use crate::input::PadButton;
 use crate::launch::LaunchPlan;
+use crate::session::Session;
 
 pub enum Route {
     Home,
@@ -30,7 +31,7 @@ pub enum Route {
     EditHandler(Handler),
     Game,
     Instances,
-    Session(Arc<LaunchPlan>),
+    Session(Session, Handler),
 }
 
 impl Route {
@@ -42,7 +43,7 @@ impl Route {
             Route::EditHandler(handler) => Box::new(EditHandlerScreen::new(handler)),
             Route::Game => Box::new(GameScreen),
             Route::Instances => Box::new(InstancesScreen::new(state)),
-            Route::Session(plan) => Box::new(SessionScreen::new(plan)),
+            Route::Session(session, handler) => Box::new(SessionScreen::new(session, handler)),
         }
     }
 }
@@ -107,4 +108,6 @@ pub trait Screen {
 
     /// Gamepad bindings for this screen
     fn handle_gamepad(&mut self, _state: &mut AppState, _presses: &[(usize, PadButton)]) {}
+
+    fn should_capture_ctrl_c(&mut self) -> bool {false}
 }

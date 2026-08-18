@@ -116,13 +116,15 @@ impl InstancesScreen {
         self.edit_modal = None;
     }
 
-    fn launch(&mut self, state: &mut AppState) {
+    fn launch(&mut self, state: &mut AppState) { // We shouldnt use active_handler, we should have that be part of this instances session. Should be &self.handler
         let Some(handler) = state.mode.active_handler() else {
             return;
         };
         let handler = handler.clone();
         let cfg = state.options.clone();
         let _ = save_cfg(&cfg);
+        state.pending_route = Some(Route::Session(std::mem::take(&mut state.session), handler));
+        // state.active_session
         // let devices: Vec<DeviceInfo> = state.input_devices.iter().map(|device| device.info()).collect();
         // // TODO REPLACE!
         // let plan = Arc::new(LaunchPlan::build(&state.session, &state.monitors, devices, &cfg));

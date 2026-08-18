@@ -58,7 +58,7 @@ impl eframe::App for PartyApp {
 
         // egui swallows Ctrl+C into a Copy event before it reaches keys_down,
         // so re-insert the key press for forwarding into game instances.
-        if self.state.active_session.is_some() {
+        if self.screen.should_capture_ctrl_c() {
             let mut i = 0;
             while i < raw_input.events.len() {
                 if matches!(raw_input.events[i], egui::Event::Copy) {
