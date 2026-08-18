@@ -12,7 +12,8 @@ use crate::input::DeviceRefrence;
 use crate::layout::{Layout, WindowPosition};
 use crate::monitor::Monitor;
 use crate::profiles::next_temp_name;
-use crate::util::{ChildContainer, next_instance_color};
+use crate::unshare::{NamespaceSetup, RemoteNamespace};
+use crate::util::next_instance_color;
 use crate::video::egl::EglApi;
 use crate::video::gamescope::{GamescopeWaylandState, InstanceStreamView};
 use crate::video::pipewire::{PipewireCommand, PipewireID, PipewireInstance, PipewireStream};
@@ -35,7 +36,7 @@ pub struct InstanceLaunched {
     pub last_error_dont_retry: Option<InstanceLaunchedStatus>,
 
     pub start_instant: Instant, // Time to wait for to start gamescope. (any time past this we are running)
-    pub gamescope_proc: Option<(ChildContainer, OwnedFd, Instant)>,
+    pub gamescope_proc: Option<(RemoteNamespace, OwnedFd, Instant)>,
     pub stream_view: Option<InstanceStreamView>,
 
 
@@ -248,7 +249,7 @@ impl Instance {
 
         let Some(ref mut launch_proc) = launch_data.gamescope_proc else {return InstanceLaunchedStatus::Failed;};
 
-        if !matches!(launch_proc.0.refr().try_wait(), Ok(None)) {
+        if !matches!(launch_proc.0.child_pidfd.try_wait(), Ok(None)) {
             launch_data.last_error_dont_retry = Some(InstanceLaunchedStatus::Exited);
             return InstanceLaunchedStatus::Exited;
         }
@@ -353,9 +354,18 @@ impl Instance {
         cmd.args(["--backend", "headless"]);
         cmd.args(["--", "konsole"]);
 
-        let child = cmd.spawn().map_err(|e| format!("Spawn error: {e}"))?;
+        // let mut cmd = Command::new("ls");
+        // cmd.args(["-lah", "/tmp"]);
 
-        launch_data.gamescope_proc = Some((ChildContainer::new(child), ready_read, now+Duration::from_secs(5)));
+
+        // let child = cmd.spawn().map_err(|e| format!("Spawn error: {e}"))?;
+        let child_rmt = RemoteNamespace::new(NamespaceSetup{
+            cmd,
+            input_devs: vec![]
+        }).unwrap();//?;
+        // child_rmt.child_pidfd.try_wait()
+
+        launch_data.gamescope_proc = Some((child_rmt, ready_read, now+Duration::from_secs(5)));
 
         Ok(())
     }
@@ -363,7 +373,9 @@ impl Instance {
     pub fn is_alive_or_starting(&mut self) -> bool {
         let Some(ref mut ld) = self.launch_data else {return true};
         let Some(ref mut prgm) = ld.gamescope_proc else {return true};
-        prgm.0.refr().try_wait().unwrap().is_none()
+        // println!("{:#?}", prgm.0.child_pidfd.try_wait().unwrap());
+        prgm.0.child_pidfd.try_wait().unwrap().is_none()
+        // true
     }
 
     pub fn kill_game(&mut self) {
@@ -371,7 +383,7 @@ impl Instance {
         ld.last_error_dont_retry = Some(InstanceLaunchedStatus::Exited);
 
         let Some(ref mut prgm) = ld.gamescope_proc else {return};
-        let _ = prgm.0.refr().kill();
+        let _ = prgm.0.child_pidfd.signal(nix::sys::signal::Signal::SIGKILL);
     }
 }
 

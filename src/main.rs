@@ -9,6 +9,7 @@ mod profiles;
 mod session;
 mod util;
 mod video;
+mod unshare;
 
 use crate::app::*;
 use crate::handler::Handler;

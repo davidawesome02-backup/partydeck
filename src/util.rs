@@ -328,20 +328,3 @@ pub fn next_instance_color(used: &[Color32]) -> Color32 {
         .unwrap()
         .1
 }
-
-
-pub struct ChildContainer(std::process::Child);
-impl ChildContainer {
-    pub fn new(c: std::process::Child) -> Self {
-        Self(c)
-    }
-    pub fn refr(&mut self) -> &mut std::process::Child {
-        &mut self.0
-    }
-}
-impl Drop for ChildContainer {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
