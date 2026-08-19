@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
 use eframe::egui::{self, Pos2, Rect, Vec2};
+use evdev::{InputEvent, RelativeAxisCode};
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use pipewire as pw;
 use wayland_client::protocol::wl_registry;
@@ -212,12 +213,17 @@ impl GamescopeWaylandState {
         Ok(())
     }
 
+
+    pub fn mouse_move_normalized(&mut self, delta: Vec2) -> Result<(), String> {
+        let translated_delta = self.latest_output_size.lerp_inside(delta);
+        self.mouse_move(translated_delta.to_vec2())
+    }
+
     pub fn mouse_move(&mut self, delta: Vec2) -> Result<(), String> {
         if delta == Vec2::ZERO { return Ok(()); }
-
         let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
-        let translated_delta = self.latest_output_size.lerp_inside(delta);
-        input_interface.mouse_motion(translated_delta.x as f64, translated_delta.y as f64);
+
+        input_interface.mouse_motion(delta.x as f64, delta.y as f64);
 
         self.has_data_to_send = true;
         Ok(())
@@ -276,6 +282,34 @@ impl InstanceStreamView {
         })
     }
 
+    pub fn inject_input(&mut self, input: InputEvent) -> Result<(), String> {
+        let evt = input.destructure();
+        // self.wayland_state.send_key(translated_key, true)?
+        // println!("{:#?}", evt);
+        match evt {
+            evdev::EventSummary::Key(_key_event, key_code, held) => {
+                if held == 0 {self.wayland_state.send_key(key_code.0 as u32, false)?;}
+                if held == 1 {self.wayland_state.send_key(key_code.0 as u32, true)?;}
+            },
+            evdev::EventSummary::RelativeAxis(_relative_axis_event, relative_axis_code, move_amt) => {
+                match relative_axis_code {
+                    RelativeAxisCode::REL_X => {
+                        self.wayland_state.mouse_move(Vec2 { x: move_amt as f32, y: 0.0 })?;
+                    }
+                    RelativeAxisCode::REL_Y => {
+                        self.wayland_state.mouse_move(Vec2 { x: 0.0, y: move_amt as f32 })?;
+
+                    }
+                    _ => {}
+                }
+            },
+            evdev::EventSummary::AbsoluteAxis(absolute_axis_event, absolute_axis_code, _) => todo!(),
+            _ => {}
+        }
+
+        Ok(())
+    }
+
     fn update_keys_down(&mut self, current_keys_down: &HashSet<egui::Key>) -> Result<(), String> {
         for key_down in current_keys_down.difference(&self.last_keys_down) {
             if let Some(translated_key) = egui_key_to_xkb(*key_down) {
@@ -300,6 +334,7 @@ impl InstanceStreamView {
         let current_pointer_state = response.ctx.input(|i| i.pointer.clone());
 
         let current_keys_down = ui.input(|i| i.keys_down.clone());
+        // current_keys_down.map
 
         let current_pointer_pos =
             current_pointer_state.latest_pos()
@@ -329,7 +364,7 @@ impl InstanceStreamView {
         }
 
         if current_pointer_pos.is_some() && self.last_pointer_pos.is_some() {
-            self.wayland_state.mouse_move(current_pointer_movement)?;
+            self.wayland_state.mouse_move_normalized(current_pointer_movement)?;
 
             self.update_keys_down(&current_keys_down)?;
         }

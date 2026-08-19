@@ -107,16 +107,23 @@ impl DeviceRefrence {
 
         let user_id = fastrand::u64(..);
 
-        target.users.insert(user_id, (false, VecDeque::new(), None));
+        target.users.insert(user_id, (false, None, None));
 
         Self { device_id: device_id, user_id: user_id, is_alive: true }
     }
 
-    pub fn set_viewport(&mut self, state: &mut InputStateInner, viewport: Option<egui::ViewportId>) {
+    pub fn set_input_callback(&mut self, state: &mut InputStateInner, callback: Option<Box<dyn FnMut(Vec<InputEvent>) + Send>>) {
         let Some(tar) = state.targets.get_mut(&self.device_id) else {return;};
         let Some(user) = tar.users.get_mut(&self.user_id) else {return;};
 
-        user.2 = viewport;
+        user.1 = callback;
+    }
+
+    pub fn set_dev_change_callback(&mut self, state: &mut InputStateInner, callback: Option<Box<dyn FnMut(PathBuf, bool) + Send>>) {
+        let Some(tar) = state.targets.get_mut(&self.device_id) else {return;};
+        let Some(user) = tar.users.get_mut(&self.user_id) else {return;};
+
+        user.2 = callback;
     }
 
     pub fn set_grabbed(&mut self, state: &mut InputStateInner, grabbed: bool) {
@@ -129,12 +136,6 @@ impl DeviceRefrence {
         let Some(user) = tar.users.get_mut(&self.user_id) else {return;};
 
         user.0 = grabbed;
-    }
-
-    pub fn unhandled_events(&mut self, state: &mut InputStateInner) -> Vec<InputEvent> {
-        let Some(tar) = state.targets.get_mut(&self.device_id) else {return Vec::new()};
-        let Some(user) = tar.users.get_mut(&self.user_id) else {return Vec::new()};
-        user.1.drain(..).collect::<Vec<InputEvent>>()
     }
 
     pub fn pre_drop(&mut self, state: &mut InputStateInner) {
@@ -309,7 +310,7 @@ impl InternalDevice {
 
 pub struct TargetDevice {
     // Bool of grabbed, then input events we have to handle
-    pub users: HashMap<UserID, (bool, VecDeque<InputEvent>, Option<egui::ViewportId>)>,
+    pub users: HashMap<UserID, (bool, Option<Box<dyn FnMut(Vec<InputEvent>) + Send>>, Option<Box<dyn FnMut(PathBuf, bool) + Send>>)>,
 
     pub target_name: String, // Only used for display
     pub target_hash: DeviceHash,
@@ -348,10 +349,7 @@ impl InputStateInner {
         if let Some(device_id) = dev.device_id {
             if let Some(target) = self.targets.get_mut(&device_id) {
                 for user in target.users.values_mut() {
-                    user.1.extend(events.clone());
-                    if let Some(viewport_id) = user.2 {
-                        ctx.request_repaint_once_for(viewport_id);
-                    }
+                    if let Some(cb) = &mut user.1 {cb(events.clone())};
                 }
             }
         }
@@ -379,9 +377,15 @@ impl InputStateInner {
                 // Find someone to promote to this device.
                 // loop over targets and find one matching our settings that is not already in bound_targets.contains
 
-                for target in self.targets.iter() {
+                for target in self.targets.iter_mut() {
                     if !bound_targets.contains(target.0) && target.1.target_hash == dev.hash {
                         dev.device_id = Some(*target.0);
+                        // TODO call to promote function for this device ID.
+                        target.1.users.iter_mut().for_each(|u| {
+                            if let Some(cb) = &mut u.1.2 {
+                                cb(dev.path.clone(), true);
+                            }
+                        });
                         break;
                     }
                 }
@@ -390,7 +394,7 @@ impl InputStateInner {
             // Update device grab status here
             if let Some(device_id) = dev.device_id {
                 if let Some(target) = self.targets.get(&device_id) {
-                    let _ = if target.grabbed {dev.device.grab()} else {dev.device.ungrab()};
+                    let _ = if target.grabbed {dev.device.grab()} else {dev.device.ungrab()}; // TODO ADD BACK
                 }
             }
         }
@@ -402,7 +406,7 @@ impl InputStateInner {
                 target.grabbed = users_holding_grab;
 
                 for dev in self.devices.values_mut() {
-                    let _ = if target.grabbed {dev.device.grab()} else {dev.device.ungrab()};
+                    let _ = if target.grabbed {dev.device.grab()} else {dev.device.ungrab()}; // TODO ADD BACK
                 }
 
                 // Update connected devices
@@ -424,7 +428,19 @@ impl InputStateInner {
         self.fix_users();
     }
     pub fn remove_device_obj_nofix(&mut self, path: &PathBuf) {
-        self.devices.remove(path);
+        let dev = self.devices.remove(path);
+
+        if 
+            let Some(dev) = dev && 
+            let Some(dev_id) = dev.device_id &&
+            let Some(target) = self.targets.get_mut(&dev_id)
+        {
+            target.users.iter_mut().for_each(|u| {
+                if let Some(cb) = &mut u.1.2 {
+                    cb(path.clone(), false);
+                }
+            });
+        }
     }
 }
 
@@ -552,5 +568,9 @@ impl InputState {
 
     pub fn inner(&mut self) -> std::sync::MutexGuard<'_, InputStateInner> {
         self.inner.lock().unwrap()
+    }
+
+    pub fn clone_inner(&mut self) -> Arc<Mutex<InputStateInner>> {
+        self.inner.clone()
     }
 }

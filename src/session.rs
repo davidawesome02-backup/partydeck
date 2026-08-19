@@ -6,9 +6,10 @@ use std::process::{Child, Command};
 use std::sync::{Arc, RwLock, Mutex};
 
 use eframe::egui::{self, Color32};
+use evdev::InputEvent;
 
 use crate::handler::Handler;
-use crate::input::DeviceRefrence;
+use crate::input::{DeviceRefrence, InputStateInner};
 use crate::layout::{Layout, WindowPosition};
 use crate::monitor::Monitor;
 use crate::profiles::next_temp_name;
@@ -29,6 +30,13 @@ pub enum InstanceAction {
     Swap(InstanceId, InstanceId),
 }
 
+pub enum InstanceInputEvt {
+    RemoveDev(String),
+    AddDev(String),
+    InputEvt(InputEvent),
+}
+
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct InstanceId(u64);
 
@@ -39,6 +47,7 @@ pub struct InstanceLaunched {
     pub gamescope_proc: Option<(RemoteNamespace, OwnedFd, Instant)>,
     pub stream_view: Option<InstanceStreamView>,
 
+    pub input_handler: Arc<Mutex<InputStateInner>>,
 
     pub egl: Arc<EglApi>,
     pub pw_sender: pw::channel::Sender<PipewireCommand>,
@@ -47,6 +56,8 @@ pub struct InstanceLaunched {
     pub viewport_id: egui::ViewportId,
 
     pub starting_position: WindowPosition,
+
+    pub input_events: Arc<Mutex<Vec<InstanceInputEvt>>>
 }
 
 #[derive(PartialEq)]
@@ -165,14 +176,17 @@ impl Instance {
         action
     }
 
-    pub fn start_instance(&mut self, next_timeout: &mut Instant, upper_launch_data: &DisplayLaunched, position: WindowPosition) {
+    pub fn start_instance(&mut self, next_timeout: &mut Instant, upper_launch_data: &DisplayLaunched, position: WindowPosition, input_handler: Arc<Mutex<InputStateInner>>) {
         if self.launch_data.is_some() {return;}
 
+        // self.devices.iter_mut().for_each(|d| d.set_grabbed(state, true));
 
         self.launch_data = Some(InstanceLaunched {
             last_error_dont_retry: None,
             start_instant: next_timeout.clone(),
             gamescope_proc: None,
+
+            input_handler,
 
             egl: upper_launch_data.egl.clone(),
             pw_sender: upper_launch_data.pw_sender.clone(),
@@ -181,7 +195,9 @@ impl Instance {
             viewport_id: upper_launch_data.viewport_id.clone(),
             stream_view: None,
 
-            starting_position: position
+            starting_position: position,
+
+            input_events: Arc::new(Mutex::new(Vec::new())),
         });
 
         if let Some(delay) = self.handler.pause_between_starts {
@@ -250,7 +266,17 @@ impl Instance {
         let Some(ref mut launch_proc) = launch_data.gamescope_proc else {return InstanceLaunchedStatus::Failed;};
 
         if !matches!(launch_proc.0.child_pidfd.try_wait(), Ok(None)) {
+            // launch_data.
+
             launch_data.last_error_dont_retry = Some(InstanceLaunchedStatus::Exited);
+            
+            if let Ok(mut input_handler) = launch_data.input_handler.lock() {
+                // input_handler
+                for ele in &mut self.devices {
+                    ele.set_grabbed(&mut input_handler, false);
+                }
+            }
+
             return InstanceLaunchedStatus::Exited;
         }
 
@@ -334,6 +360,30 @@ impl Instance {
 
         }
 
+        for evt in launch_data.input_events.lock().unwrap().drain(..) {
+            match evt {
+                InstanceInputEvt::RemoveDev(path) => {
+                    if launch_proc.0.unbind_device(path.to_string()).is_err() {
+                        launch_data.last_error_dont_retry = Some(InstanceLaunchedStatus::Failed);
+                        return InstanceLaunchedStatus::Failed;
+                    }
+                },
+                InstanceInputEvt::AddDev(path) => {
+                    if launch_proc.0.bind_device(path.to_string()).is_err() {
+                        launch_data.last_error_dont_retry = Some(InstanceLaunchedStatus::Failed);
+                        return InstanceLaunchedStatus::Failed;
+                    }
+                },
+                InstanceInputEvt::InputEvt(input_event) => {
+                    let Some(ref mut stream) = launch_data.stream_view else {continue};
+                    if stream.inject_input(input_event).inspect_err(|e| eprintln!("Failed to send input evt: {e}")).is_err() {
+                        launch_data.last_error_dont_retry = Some(InstanceLaunchedStatus::Failed);
+                        return InstanceLaunchedStatus::Failed;
+                    }
+                },
+            }
+        }
+
 
         InstanceLaunchedStatus::Ready
     }
@@ -345,6 +395,43 @@ impl Instance {
             return Ok(());
         };
 
+        let mut input_state = launch_data.input_handler.lock().unwrap();
+        // input_handler.targets.iter().filter(|f| f).next();
+        let mut used_dev_paths = Vec::new();
+        for dev in &mut self.devices {
+            dev.set_grabbed(&mut input_state, true);
+
+            let mut dev_is_kbm = false;
+            
+            for real_dev in input_state.devices.iter() {
+                if real_dev.1.device_id == Some(dev.device_id) {
+                    if let Some(path) = real_dev.0.clone().file_name().and_then(|fname| fname.to_str()).map(|fname| String::from(fname)) {
+                        used_dev_paths.push(path);
+                    }
+
+                    dev_is_kbm = match real_dev.1.device_type() {
+                        crate::input::DeviceType::Gamepad => false,
+                        crate::input::DeviceType::Keyboard => true,
+                        crate::input::DeviceType::Mouse => true,
+                        crate::input::DeviceType::Other => false,
+                    };
+
+                    break;
+                }
+            }
+            let input_events_clone = launch_data.input_events.clone();
+            let ctx = launch_data.ctx.clone();
+            let viewport_id = launch_data.viewport_id.clone();
+            if dev_is_kbm {
+                dev.set_input_callback(&mut input_state, Some(Box::new(move |input_events| {
+                    // println!("Held device pressed: {:#?}", input_events);
+                    input_events_clone.lock().unwrap().extend(input_events.iter().map(|f| InstanceInputEvt::InputEvt(f.clone())));
+                    // ui
+                    ctx.request_repaint_once_for(viewport_id);
+                })));
+            }
+        }
+
         let (ready_read, ready_write) = nix::unistd::pipe().map_err(|e| format!("Pipe creation error: {e}"))?;
         let mut cmd = Command::new("gamescope");
         cmd.args(["-R", &format!("/proc/self/fd/{}", ready_write.as_raw_fd())]);
@@ -354,16 +441,31 @@ impl Instance {
         cmd.args(["--backend", "headless"]);
         cmd.args(["--", "konsole"]);
 
-        // let mut cmd = Command::new("ls");
-        // cmd.args(["-lah", "/tmp"]);
-
-
-        // let child = cmd.spawn().map_err(|e| format!("Spawn error: {e}"))?;
+        
         let child_rmt = RemoteNamespace::new(NamespaceSetup{
             cmd,
-            input_devs: vec![]
-        }).unwrap();//?;
-        // child_rmt.child_pidfd.try_wait()
+            input_devs: used_dev_paths
+        }).unwrap();
+
+        for dev in &mut self.devices {
+            let input_events_clone = launch_data.input_events.clone();
+            let ctx = launch_data.ctx.clone();
+            let viewport_id = launch_data.viewport_id.clone();
+
+            dev.set_dev_change_callback(&mut input_state, Some(Box::new(move |dev_path, is_addition| {
+                println!("Dev changed on held device: {:#?} - {:#?}", dev_path, is_addition);
+                if let Some(path) = dev_path.file_name().and_then(|fname| fname.to_str()).map(|fname| String::from(fname)) {
+                    input_events_clone.lock().unwrap().push(
+                        if is_addition {
+                            InstanceInputEvt::AddDev(path)
+                        } else {
+                            InstanceInputEvt::RemoveDev(path)
+                        }
+                    );
+                    ctx.request_repaint_once_for(viewport_id);
+                };
+            })));
+        }
 
         launch_data.gamescope_proc = Some((child_rmt, ready_read, now+Duration::from_secs(5)));
 
@@ -438,7 +540,7 @@ impl Display {
         action
     }
 
-    pub fn start_display(&mut self, ui: &mut egui::Ui, next_timeout: &mut Instant, viewport_id: egui::ViewportId, egl: Arc<EglApi>, pw: &PipewireInstance, mon: Monitor) {
+    pub fn start_display(&mut self, ui: &mut egui::Ui, next_timeout: &mut Instant, viewport_id: egui::ViewportId, egl: Arc<EglApi>, pw: &PipewireInstance, mon: Monitor, input_handler: Arc<Mutex<InputStateInner>>) {
         let new_launch_data = DisplayLaunched {
             egl: egl,
             pw_sender: pw.channel.clone(),
@@ -449,7 +551,7 @@ impl Display {
 
         let layout = self.window_positions(mon.width(), mon.height());
 
-        self.instances.iter_mut().zip(layout).for_each(|(inst, position)| inst.start_instance(next_timeout, &new_launch_data, position));
+        self.instances.iter_mut().zip(layout).for_each(|(inst, position)| inst.start_instance(next_timeout, &new_launch_data, position, input_handler.clone()));
 
         self.launch_data = Some(new_launch_data);
 

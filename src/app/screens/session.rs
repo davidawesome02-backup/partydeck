@@ -39,7 +39,7 @@ impl Screen for SessionScreen {
                 let Some(ref pipewire_st) = state.pipewire else {
                     return //TODO replace this
                 };
-                display.start_display(ui, next_timeout, egui::ViewportId::from_hash_of(&title), state.egl.clone(), pipewire_st, state.monitors[display.monitor_idx].clone());
+                display.start_display(ui, next_timeout, egui::ViewportId::from_hash_of(&title), state.egl.clone(), pipewire_st, state.monitors[display.monitor_idx].clone(), state.input_state.clone_inner());
             }
             println!("Starting display!");
         }
@@ -78,6 +78,14 @@ impl Screen for SessionScreen {
         }
 
         if !has_alive_session {
+            let mut input_state = state.input_state.inner();
+            session_data.displays.iter_mut().for_each(
+                |d| d.instances.iter_mut().for_each(
+                    |i| i.devices.iter_mut().for_each(|dev| {
+                        dev.pre_drop(&mut input_state);
+                    })
+                )
+            );
             state.pending_route = Some(super::Route::Home)
         }
 
