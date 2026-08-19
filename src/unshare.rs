@@ -223,7 +223,10 @@ impl RemoteNamespace {
                 // write(std::io::stdout(), "Correct way to log stuff without crashing\n".as_bytes()).ok();
                 let socket = RpcSocket::new(sockets.1);
                 // UNWRAP "unsafe" but we dont care :D
-                fork_inner(&mut setup, socket).unwrap();
+                // fork_inner(&mut setup, socket).unwrap();
+
+                // Turns out we do care, this will leave the `exit` syscall to fail, and the process to be a zombie with a fake open window.
+                let _ = fork_inner(&mut setup, socket).inspect_err(|e| eprintln!("ERROR IN CONTAINER: {e:?}"));
 
                 unsafe { libc::_exit(0) };
             }

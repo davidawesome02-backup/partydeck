@@ -244,6 +244,7 @@ impl Instance {
         };
 
         if let Some(ref last_err) = launch_data.last_error_dont_retry {
+            launch_data.stream_view = None; // Triggers drop of the view, so we dont keep getting callbacks.
             return last_err.clone();
         }
 
@@ -445,7 +446,7 @@ impl Instance {
         let child_rmt = RemoteNamespace::new(NamespaceSetup{
             cmd,
             input_devs: used_dev_paths
-        }).unwrap();
+        }).map_err(|e| format!("{e:?}"))?;
 
         for dev in &mut self.devices {
             let input_events_clone = launch_data.input_events.clone();
@@ -474,10 +475,7 @@ impl Instance {
 
     pub fn is_alive_or_starting(&mut self) -> bool {
         let Some(ref mut ld) = self.launch_data else {return true};
-        let Some(ref mut prgm) = ld.gamescope_proc else {return true};
-        // println!("{:#?}", prgm.0.child_pidfd.try_wait().unwrap());
-        prgm.0.child_pidfd.try_wait().unwrap().is_none()
-        // true
+        ld.last_error_dont_retry.is_none()
     }
 
     pub fn kill_game(&mut self) {
@@ -486,6 +484,8 @@ impl Instance {
 
         let Some(ref mut prgm) = ld.gamescope_proc else {return};
         let _ = prgm.0.child_pidfd.signal(nix::sys::signal::Signal::SIGKILL);
+
+        ld.stream_view = None;
     }
 }
 

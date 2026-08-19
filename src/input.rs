@@ -3,6 +3,7 @@ use std::{
     collections::{HashMap, VecDeque}, hash::{Hash, Hasher}, num::NonZeroU64, os::fd::{AsFd, BorrowedFd, OwnedFd}, path::PathBuf, sync::{
         Arc, Mutex, mpsc::{Receiver, Sender, channel},
     }, thread::{self, JoinHandle},
+    vec::Vec
 };
 
 use evdev::{AbsoluteAxisCode, Device, EventSummary, InputEvent, InputId, KeyCode};
@@ -465,7 +466,10 @@ impl InputState {
 
             // scan existing devices
             if let Ok(mut guard) = thread_inner.lock() {
-                for devpath in evdev::enumerate() {
+                let mut enum_devs = evdev::enumerate().collect::<Vec<(PathBuf, Device)>>();
+                enum_devs.sort_by(|a, b| a.1.name().cmp(&b.1.name()));
+                
+                for devpath in enum_devs {
                     if let Ok(device) = Device::open(&devpath.0) {
                         let _ = device.set_nonblocking(true);
                         guard.add_device_obj_nofix(devpath.0.clone(), device);

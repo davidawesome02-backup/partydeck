@@ -182,6 +182,7 @@ impl PipewireStream {
                 write_pw_stream.streaming = matches!(new, StreamState::Streaming);
             })
             .param_changed(move |stream: &pipewire::stream::Stream, stream_metadata, id, param| {
+                // TODO watch out, if this gets called after the stream is dropped, we may have been moved off our target ID.
                 let Some(param) = param else { return };
                 if id != spa::param::ParamType::Format.as_raw() {
                     return;
