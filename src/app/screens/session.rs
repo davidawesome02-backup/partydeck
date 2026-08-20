@@ -1,16 +1,13 @@
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use eframe::egui::{self, Color32, Rect, UiBuilder, vec2};
+use eframe::egui;
 
 use crate::app::screens::Screen;
 use crate::app::state::AppState;
-use crate::app::toasts::{Severity, Toasts};
+use crate::app::toasts::Toasts;
 use crate::handler::Handler;
-use crate::launch::LaunchPlan;
-use crate::session::{InstanceId, Session};
-use crate::video::gamescope::InstanceStreamView;
+use crate::session::Session;
 
 pub struct SessionScreen {
     session_data: Arc<Mutex<Session>>,

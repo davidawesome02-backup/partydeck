@@ -1,5 +1,5 @@
 use std::{
-    ffi::OsStr, fs::File, io::Write, os::{
+    ffi::OsStr, fs::File, io::Write, mem::forget, os::{
         fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd},
         unix::net::UnixStream,
     }, path::PathBuf, process::Command, time::Duration,
@@ -423,17 +423,16 @@ fn enter_new_namespace(setup: &NamespaceSetup) -> anyhow::Result<()> {
 
 
 
-// I havent had problems with this on host WL or X11 so I just assume its safe and avoids a lot of hastle patching 
-// the out of scope wlroots "issue" that for some reason checks who owns this directory and refuses to launch
-// if its not root or us, and seeing as root -> nobody:nobody, uid != 0. 
-mount(
-    NONE_STR,
-    "/newroot/tmp/.X11-unix",
-    Some("tmpfs"),
-    MsFlags::MS_NOSUID | MsFlags::MS_SILENT,
-    None::<&OsStr>,
-).context("Failed to mount tmpfs on /newroot/tmp/.X11-unix")?;
-
+    // I havent had problems with this on host WL or X11 so I just assume its safe and avoids a lot of hastle patching 
+    // the out of scope wlroots "issue" that for some reason checks who owns this directory and refuses to launch
+    // if its not root or us, and seeing as root -> nobody:nobody, uid != 0. 
+    mount(
+        NONE_STR,
+        "/newroot/tmp/.X11-unix",
+        Some("tmpfs"),
+        MsFlags::MS_NOSUID | MsFlags::MS_SILENT,
+        None::<&OsStr>,
+    ).context("Failed to mount tmpfs on /newroot/tmp/.X11-unix")?;
 
 
 

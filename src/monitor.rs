@@ -128,7 +128,7 @@ pub fn get_monitors_errorless() -> Vec<Monitor> {
     let mut monitors = Vec::new();
 
     if let Ok(ret_monitors) = get_monitors_x11() {
-        monitors = ret_monitors;
+        monitors.extend(ret_monitors);
     }
 
     if monitors.len() == 0 { // Quick patch for those who have no x11 visable monitors, so we dont just panic.

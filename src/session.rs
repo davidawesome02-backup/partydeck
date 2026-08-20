@@ -475,7 +475,12 @@ impl Instance {
 
     pub fn is_alive_or_starting(&mut self) -> bool {
         let Some(ref mut ld) = self.launch_data else {return true};
-        ld.last_error_dont_retry.is_none()
+        let is_alive = ld.last_error_dont_retry.is_none();
+        if !is_alive {
+            ld.stream_view = None;
+        }
+
+        is_alive
     }
 
     pub fn kill_game(&mut self) {
