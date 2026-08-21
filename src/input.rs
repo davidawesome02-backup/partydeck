@@ -1,14 +1,13 @@
 
 use std::{
-    collections::{HashMap, VecDeque}, hash::{Hash, Hasher}, num::NonZeroU64, os::fd::{AsFd, BorrowedFd, OwnedFd}, path::PathBuf, sync::{
-        Arc, Mutex, mpsc::{Receiver, Sender, channel},
+    collections::HashMap, hash::{Hash, Hasher}, num::NonZeroU64, os::fd::{AsFd, OwnedFd}, path::PathBuf, sync::{
+        Arc, Mutex, mpsc::{Sender, channel},
     }, thread::{self, JoinHandle},
     vec::Vec
 };
 
 use evdev::{AbsoluteAxisCode, Device, EventSummary, InputEvent, InputId, KeyCode};
 use nix::{poll::{PollFd, PollFlags, PollTimeout, poll}, unistd::dup};
-use eframe::egui;
 
 use crate::app::PadFilterType;
 
@@ -324,20 +323,17 @@ pub struct TargetDevice {
 pub struct InputStateInner {
     pub devices: HashMap<PathBuf, InternalDevice>,
     pub targets: HashMap<DeviceID, TargetDevice>,
-    // pub users: HashMap<UserID, DeviceID>, // Maybe remove, just a convience for now.
-    pub ctx: egui::Context,
 }
 
 impl InputStateInner {
-    fn new(ctx: egui::Context) -> Self {
+    fn new() -> Self {
         Self {
             devices: HashMap::new(),
-            targets: HashMap::new(),
-            ctx,
+            targets: HashMap::new()
         }
     }
 
-    fn fetch_and_dispatch_events(&mut self, path: PathBuf, ctx: &egui::Context) -> Result<(), ()> {
+    fn fetch_and_dispatch_events(&mut self, path: PathBuf) -> Result<(), ()> {
         let dev = self.devices.get_mut(&path).ok_or(())?; // Just ignore for now.
 
         let events = 
@@ -453,9 +449,9 @@ pub struct InputState {
 }
 
 impl InputState {
-    pub fn new(ctx: egui::Context) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
 
-        let inner = Arc::new(Mutex::new(InputStateInner::new(ctx.clone())));
+        let inner = Arc::new(Mutex::new(InputStateInner::new()));
         let (shutdown_tx, shutdown_rx) = channel();
         let thread_inner = Arc::clone(&inner);
 
@@ -549,7 +545,7 @@ impl InputState {
                                 if let Some((path, _fd)) = fds.get(fds_idx) {
                                     // find device entry by path and dispatch
                                     
-                                    if guard.fetch_and_dispatch_events(path.clone(), &ctx).is_err() {
+                                    if guard.fetch_and_dispatch_events(path.clone()).is_err() {
                                         // Todo remove device because it gon :(
                                     }
                                 }

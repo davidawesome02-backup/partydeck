@@ -10,6 +10,7 @@ use super::toasts::Toasts;
 use crate::handler::{Handler, scan_handlers};
 use crate::launch::LaunchPlan;
 use crate::monitor::{Monitor, get_monitors_errorless};
+use crate::remote::shared;
 use crate::session::{InstanceId, Session};
 use crate::video::egl::EglApi;
 use crate::video::pipewire::PipewireInstance;
@@ -34,6 +35,8 @@ pub struct AppState {
     pub pipewire: Option<PipewireInstance>,
 
     pub input_state: input::InputState,
+
+    pub remote_con: shared::RemoteConnection,
 }
 
 pub enum Mode {
@@ -89,7 +92,10 @@ impl AppState {
             .inspect_err(|e| eprintln!("Failed to start pipewire thread: {e}"))
             .ok();
 
-        let input_state = input::InputState::new(ctx).unwrap();
+        let input_state = input::InputState::new().unwrap();
+
+        let remote_con = shared::RemoteConnection::new().unwrap();
+        remote_con.channel.send(shared::RemoteCommand::Connect).unwrap();
 
         Self {
             options,
@@ -103,7 +109,8 @@ impl AppState {
             active_session: None,
             egl,
             pipewire,
-            input_state
+            input_state,
+            remote_con
         }
     }
 

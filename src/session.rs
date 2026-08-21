@@ -38,7 +38,7 @@ pub enum InstanceInputEvt {
 
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct InstanceId(u64);
+pub struct InstanceId(pub u64);
 
 pub struct InstanceLaunched {
     pub last_error_dont_retry: Option<InstanceLaunchedStatus>,

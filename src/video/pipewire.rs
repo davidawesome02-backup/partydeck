@@ -14,19 +14,18 @@ pub enum PipewireCommand {
 }
 pub struct PipewireInstance {
     pub channel: pw::channel::Sender<PipewireCommand>,
-    pub thread: Option<JoinHandle<()>>,
+    pub _thread: JoinHandle<()>,
     pub streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<PipewireStream>>>>>,
 }
 
 
 impl PipewireInstance {
-    #[allow(unused)]
     pub fn new() -> Result<Self, std::io::Error> {
         let (sender, receiver) = pw::channel::channel::<PipewireCommand>();
 
         let streams = Arc::new(RwLock::new(HashMap::new()));
 
-        let mut new_instance = PipewireInstance { channel: sender, thread: None, streams: streams.clone() };
+        let streams_clone = streams.clone();
 
         let thread = std::thread::Builder::new()
             .name("pipewire-thread".into())
@@ -36,9 +35,15 @@ impl PipewireInstance {
                 }
             })?;
             
-        new_instance.thread = Some(thread);
+        let new_instance = PipewireInstance { channel: sender, _thread: thread, streams: streams_clone };
 
         return Ok(new_instance)
+    }
+}
+
+impl Drop for PipewireInstance {
+    fn drop(&mut self) {
+        let _ = self.channel.send(PipewireCommand::Terminate);
     }
 }
 

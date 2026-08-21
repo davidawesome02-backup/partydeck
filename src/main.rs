@@ -10,6 +10,7 @@ mod session;
 mod util;
 mod video;
 mod unshare;
+mod remote;
 
 use crate::app::*;
 use crate::handler::Handler;
