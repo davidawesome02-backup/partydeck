@@ -1,15 +1,44 @@
-use std::{collections::HashMap, sync::{Arc, RwLock}, thread::JoinHandle};
+use std::{collections::HashMap, sync::{Arc, Mutex, RwLock, atomic::AtomicU64}, thread::JoinHandle};
 
-use eframe::egui;
 use pipewire::{self as pw, context::ContextRc, core::CoreRc, main_loop::MainLoopRc, stream::{StreamListener, StreamRc}};
 use pw::spa;
 use spa::pod::Pod;
 
+use crate::video::pipewire::PipewireCommand::Disconnect;
+
+static LISTENER_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 pub type PipewireID = u32;
 
+pub struct PipewireListener {
+    ch: pw::channel::Sender<PipewireCommand>,
+    listen_id: u64,
+    pw_id: u32,
+}
+
+pub type PwCBtype = Box<dyn FnMut() + Send + Sync + 'static>;
+
+impl PipewireListener {
+    pub fn new(ch: pw::channel::Sender<PipewireCommand>, pw_id: PipewireID, cb: PwCBtype) -> Self {
+        let listen_id = LISTENER_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        let _ = ch.send(PipewireCommand::ConnectVid(listen_id, pw_id, cb));
+        
+        Self { ch, listen_id, pw_id }
+    }
+    pub fn pw_id(&self) -> u32 {
+        self.pw_id
+    }
+}
+impl Drop for PipewireListener {
+    fn drop(&mut self) {
+        let _ = self.ch.send(Disconnect(self.listen_id, self.pw_id));
+    }
+}
+
 pub enum PipewireCommand {
-    ConnectVid(PipewireID, egui::Context, egui::ViewportId),
-    Disconnect(PipewireID),
+    ConnectVid(u64, PipewireID, PwCBtype),
+    Disconnect(u64, PipewireID),
     Terminate
 }
 pub struct PipewireInstance {
@@ -60,58 +89,81 @@ fn pipewire_thread_inner(streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<Pipe
     let listener_hashmap: RwLock<HashMap<PipewireID, (StreamListener<Arc<RwLock<PipewireStream>>>, StreamRc)>> = RwLock::new(HashMap::new());
 
     let _attached = receiver.attach(mainloop.loop_(), move |cmd| match cmd {
-        PipewireCommand::ConnectVid(id, ctx, viewport) => {
-            println!("Connecting to pipewire stream: {id}");
+        PipewireCommand::ConnectVid(listen_id, pw_id, cb) => {
+            println!("Connecting to pipewire stream: {pw_id}");
+
             let Ok(mut streams_map) = streams.write() else {
                 eprintln!("Connect: Pipewire response stream map poisoned!");
                 return;
             };
-            match PipewireStream::new(id, ctx, viewport, loop_ref.clone(), context.clone(), core.clone()) {
-                Ok(new_pw_stream) => {
-                    let resulting_stream = new_pw_stream;
-                    streams_map.insert(id, resulting_stream.0);
-                    if let Ok(mut listener_map_write) = listener_hashmap.write() {
-                        listener_map_write.insert(id, resulting_stream.1);
-                    } else {
-                        eprintln!("Connect: Pipewire listener map poisoned!");
-                    }
-                },
-                Err(err_msg) => {
-                    eprintln!("Error from pipewire connect: {err_msg}");
-                    return;
+
+            if !streams_map.contains_key(&pw_id) {
+                let Ok(new_pw_obj) = 
+                    PipewireStream::new(pw_id, loop_ref.clone(), context.clone(), core.clone())
+                    .inspect_err(|e| eprintln!("Error from pipewire connect: {e}")) else {return};
+
+                streams_map.insert(pw_id, new_pw_obj.0);
+
+                if let Ok(mut listener_map_write) = listener_hashmap.write() {
+                    listener_map_write.insert(pw_id, new_pw_obj.1);
+                } else {
+                    eprintln!("Connect: Pipewire listener map poisoned!");
                 }
             }
+
+            let stream = streams_map.get(&pw_id).unwrap().read().unwrap();
+            let mut listeners = stream.listeners.lock().unwrap();
+            listeners.insert(listen_id, cb);
         }
-        PipewireCommand::Disconnect(id) => {
+        PipewireCommand::Disconnect(listen_id, pw_id) => {
             let Ok(mut listen_hashmap_lock) = listener_hashmap.write() else {
                 eprintln!("Disconnect: Pipewire listener map poisoned!");
                 return;
             };
-
-            if listen_hashmap_lock.remove(&id).is_none() {
-                eprintln!("No stream to disconenct listener ({id})"); 
-                return;
-            }
-            
-            // Cant disconnect directly because storing the RC causes multi-thread issues,
-            // Probably should just aquire a writer on main thread to write this, because we cant do true error handling here.
 
             let Ok(mut streams_map) = streams.write() else {
                 eprintln!("Disconnect: Pipewire response stream map poisoned!");
                 return;
             };
 
-            let Some(stream_removed) = streams_map.remove(&id) else {
-                eprintln!("No stream to disconenct ({id})"); 
+            let Some(stream) = streams_map.get(&pw_id) else {
+                eprintln!("No stream to remove");
+                return;
+            };
+            
+            let Ok(stream_loc) = stream.read() else {
+                eprintln!("Disconnect: Pipewire response stream poisoned!");
                 return;
             };
 
-            let Ok(mut stream_removed_writer) = stream_removed.write() else {
-                eprintln!("Failed to disconnect stream properly: {id}");
-                return;
-            };
+            let mut listeners = stream_loc.listeners.lock().unwrap();
+            listeners.remove(&listen_id);
 
-            stream_removed_writer.streaming = false;
+            if listeners.len() == 0 {
+                std::mem::drop(listeners); // Needed to inform the compiler that we can free our ref to streams_map
+                std::mem::drop(stream_loc); // Needed to inform the compiler that we can free our ref to streams_map
+
+                if listen_hashmap_lock.remove(&pw_id).is_none() {
+                    eprintln!("No stream to disconenct listener ({pw_id})"); 
+                    return;
+                }
+
+                // Cant disconnect directly because storing the RC causes multi-thread issues,
+                // Probably should just aquire a writer on main thread to write this, because we cant do true error handling here.
+
+                let Some(stream_removed) = streams_map.remove(&pw_id) else {
+                    eprintln!("No stream to disconenct ({pw_id})"); 
+                    return;
+                };
+
+                let Ok(mut stream_removed_writer) = stream_removed.write() else {
+                    eprintln!("Failed to disconnect stream properly: {pw_id}");
+                    return;
+                };
+
+                stream_removed_writer.streaming = false;
+            }
+
         }
         PipewireCommand::Terminate => {
             loop_ref.quit();
@@ -142,13 +194,13 @@ pub struct PipewireStream {
     pub latest_frame: Option<DmaBufFrame>,
 
     pub spa_format_latest: spa::param::video::VideoInfoRaw,
+
+    listeners: Arc<Mutex<HashMap<u64, PwCBtype>>>,
 }
 
 impl PipewireStream {
     fn new(
         id: PipewireID,
-        ctx: egui::Context,
-        viewport: egui::ViewportId,
         _mainloop: MainLoopRc,
         _context: ContextRc,
         core: CoreRc
@@ -170,6 +222,8 @@ impl PipewireStream {
                 latest_frame: None,
 
                 spa_format_latest: Default::default(),
+
+                listeners: Arc::new(Mutex::new(HashMap::new())),
             }
         ));
 
@@ -182,14 +236,13 @@ impl PipewireStream {
             .state_changed(move |_stream, stream_metadata, _old, new| {
                 use pw::stream::StreamState;
                 
-                // TODO handle better maybe? For now we just have to crash because we cant do much else if we poison
                 let mut write_pw_stream = stream_metadata.write().unwrap(); 
                 write_pw_stream.streaming = matches!(new, StreamState::Streaming);
             })
-            .param_changed(move |stream: &pipewire::stream::Stream, stream_metadata, id, param| {
+            .param_changed(move |stream: &pipewire::stream::Stream, stream_metadata, fmt_id, param| {
                 // TODO watch out, if this gets called after the stream is dropped, we may have been moved off our target ID.
                 let Some(param) = param else { return };
-                if id != spa::param::ParamType::Format.as_raw() {
+                if fmt_id != spa::param::ParamType::Format.as_raw() {
                     return;
                 }
 
@@ -205,6 +258,7 @@ impl PipewireStream {
                 }
 
                 let mut write_pw_stream = stream_metadata.write().unwrap();
+                if write_pw_stream.id != id {return;} // Only connect to our ID, DONT FALLBACK
 
                 if write_pw_stream.spa_format_latest.parse(param).is_err() {
                     return;
@@ -245,12 +299,6 @@ impl PipewireStream {
                 if fd < 0 {
                     return;
                 }
-                // todo shouldnt be needed, remove again. no need to dup
-                // let owned = match unsafe { dup_raw_fd(fd as std::os::fd::RawFd) } {
-                //     Ok(f) => f,
-                //     Err(_) => return,
-                // };
-                
 
                 let chunk = data.chunk();
                 let offset = chunk.offset();
@@ -272,9 +320,15 @@ impl PipewireStream {
                     offset,
                     stride,
                 });
+
+                // Get before drop, but drop so the funcs can lock us again to get the frame data.
+                let listeners = write_pw_stream.listeners.clone(); 
+
                 drop(write_pw_stream);
 
-                ctx.request_repaint_once_for(viewport);
+                for listener in listeners.lock().unwrap().values_mut() {
+                    listener();
+                }
             })
             .register()?;
 

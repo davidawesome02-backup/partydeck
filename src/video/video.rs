@@ -15,7 +15,7 @@ use pipewire as pw;
 use super::egl::{EglApi, EglError, EglImage};
 
 use crate::video::pipewire::PipewireCommand::ConnectVid;
-use crate::video::pipewire::{DmaBufFrame, PipewireCommand, PipewireID, PipewireStream};
+use crate::video::pipewire::{DmaBufFrame, PipewireCommand, PipewireID, PipewireListener, PipewireStream};
 
 /// Errors that can occur while constructing a [`PipewireVideo`].
 #[derive(Debug)]
@@ -203,7 +203,7 @@ impl Drop for Renderer {
 pub struct PipewireVideo {
     renderer: Arc<Mutex<Renderer>>,
     sender: pw::channel::Sender<PipewireCommand>,
-    pub pw_id: PipewireID,
+    pub pw_refrence: PipewireListener,
     streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<PipewireStream>>>>>,
 }
 
@@ -219,12 +219,14 @@ impl PipewireVideo {
         let renderer = Renderer::new(egl)?;
         let renderer = Arc::new(Mutex::new(renderer));
 
-        let _ = sender.send(ConnectVid(target, ctx.clone(), viewport));
+        let ctx_clone = ctx.clone();
 
         Ok(PipewireVideo {
             renderer,
-            sender,
-            pw_id: target,
+            sender: sender.clone(),
+            pw_refrence: PipewireListener::new(sender, target, Box::new(move || {
+                ctx_clone.request_repaint_once_for(viewport);
+            })),
             streams,
         })
     }
@@ -238,7 +240,7 @@ impl PipewireVideo {
         }
 
         let Some(pipewire_stream) = self.streams.read().ok()
-            .and_then(|streams_lock| streams_lock.get(&self.pw_id).cloned())
+            .and_then(|streams_lock| streams_lock.get(&self.pw_refrence.pw_id()).cloned())
         else {
             return response;
         };
@@ -275,11 +277,5 @@ impl PipewireVideo {
         });
 
         response
-    }
-}
-
-impl Drop for PipewireVideo {
-    fn drop(&mut self) {
-        let _ = self.sender.send(PipewireCommand::Disconnect(self.pw_id));
     }
 }
