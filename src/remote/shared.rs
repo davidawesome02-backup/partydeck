@@ -176,9 +176,5 @@ enum WsMessage {
 
     #[serde(rename = "client_error")]
     ClientError { client_error: String, client_id: String },
-
-    // // Seralize only
-    // #[serde(rename = "answer")]
-    // Answer { client_id: String, response: String }
 }
 

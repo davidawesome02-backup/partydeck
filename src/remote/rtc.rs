@@ -1,6 +1,8 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use std::{path::PathBuf, sync::{Arc, Mutex, OnceLock}, time::Duration};
 
+use anyhow::Context;
 use eframe::egui::Color32;
+use evdev::{BusType, InputId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 use webrtc::{data_channel::{DataChannel, DataChannelEvent}, peer_connection::{MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceGatheringState, RTCIceServer, RTCPeerConnectionState, Registry, register_default_interceptors}, runtime::{Runtime, Sender, default_runtime}};
@@ -35,7 +37,6 @@ impl PeerConnectionEventHandler for TestHandler {
     async fn on_connection_state_change(&self, state: RTCPeerConnectionState) {
         println!("Peer Connection State has changed: {state}");
         if state == RTCPeerConnectionState::Failed || state == RTCPeerConnectionState::Closed || state == RTCPeerConnectionState::Connected {
-            println!("Peer Connection has gone to failed exiting");
             let _ = self.done_tx.try_send(state);
         }
     }
@@ -103,7 +104,15 @@ impl RemoteClient {
 
         let config = RTCConfigurationBuilder::new()
             .with_ice_servers(vec![RTCIceServer {
-                urls: vec!["stun:stun.l.google.com:19302".to_string()],
+                urls: vec![
+                    "stun:stun.l.google.com:19302".to_string(),
+                    "stun:stun1.l.google.com:19302".to_string()
+                ],
+                ..Default::default()
+            }, RTCIceServer {
+                urls: vec![
+                    "stun:stun.services.mozilla.com:3478".to_string()
+                ],
                 ..Default::default()
             }])
             .build();
@@ -141,10 +150,10 @@ impl RemoteClient {
         let json_ans_str = serde_json::to_string(&answer_sdp)?;
         
         
-        msg_resp.send(serde_json::json!({
-            "type": "answer",
+        msg_resp.send(serde_json::json!({ // May rename to answer later, but for now was "response" because could be failure
+            "type": "response",
             "client_id": ws_id,
-            "answer": json_ans_str
+            "response": json_ans_str
         }).to_string())?;
 
         let connection_timeout = tokio::time::sleep(tokio::time::Duration::from_secs(60));
@@ -164,13 +173,19 @@ impl RemoteClient {
             }
         }
 
-        Self::message_handler(self_arc, data_channel, done_rx).await?; // Not sure if this is a good idea being fully ran 24/7 but IDRC
+        self_arc.lock().unwrap().connected = true;
 
+        Self::main_message_loop(self_arc.clone(), data_channel, done_rx).await?; // Not sure if this is a good idea being fully ran 24/7 but IDRC
+
+        self_arc.lock().unwrap().connected = false;
 
         Ok(())
     }
 
-    async fn message_handler(self_arc: Arc<Mutex<Self>>, dc: Arc<dyn DataChannel>, mut done_rx: webrtc::runtime::Receiver<RTCPeerConnectionState>) -> anyhow::Result<()> {
+    async fn main_message_loop(self_arc: Arc<Mutex<Self>>, dc: Arc<dyn DataChannel>, mut done_rx: webrtc::runtime::Receiver<RTCPeerConnectionState>) -> anyhow::Result<()> {
+        let mut opt_dev = Self::create_uinput_if_possible().await.inspect_err(|e| eprintln!("Failed to create uinput virtual controller: {e:?}")).ok();
+        let mut selected_instance: Option<u64>;
+
         loop {
             let datachannel_poll_data = {
                 tokio::select! {
@@ -240,6 +255,22 @@ impl RemoteClient {
         };
 
         Ok(Some(serde_json::to_string(&message_to_send)?))
+    }
+
+    async fn create_uinput_if_possible() -> anyhow::Result<(evdev::uinput::VirtualDevice, PathBuf)> {
+        let dev_builder = evdev::uinput::VirtualDevice::builder().context("Cant open uinput")?
+            // .with_(&evdev::AttributeSet::from_iter([evdev::EventType::KEY])).context("Invalid keys")?
+            .name(&"hi")
+            .input_id(InputId::new(BusType::BUS_USB, 12, 12, 1))
+            .with_keys(&evdev::AttributeSet::from_iter([evdev::KeyCode::KEY_SPACE; 1])).context("Invalid keys")?;
+
+        let mut dev = dev_builder.build().context("Failed to build")?;
+        tokio::time::sleep(Duration::from_millis(500)).await; // The kernel scares me. Just give it time to calm down.
+        let mut path_checker = dev.enumerate_dev_nodes_blocking().context("Failed to open device node")?;
+        let path_dev = path_checker.next().ok_or(anyhow::anyhow!("No path found"))?.context("No path found")?;
+
+        println!("New virtual device added for RTC: {path_dev:?}");
+        Ok((dev, path_dev))
     }
 }
 

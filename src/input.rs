@@ -1,9 +1,8 @@
 
 use std::{
     collections::HashMap, hash::{Hash, Hasher}, num::NonZeroU64, os::fd::{AsFd, OwnedFd}, path::PathBuf, sync::{
-        Arc, Mutex, mpsc::{Sender, channel},
-    }, thread::{self, JoinHandle},
-    vec::Vec
+        Arc, Mutex, atomic::AtomicU64, mpsc::{Sender, channel},
+    }, thread::{self, JoinHandle}, vec::Vec
 };
 
 use evdev::{AbsoluteAxisCode, Device, EventSummary, InputEvent, InputId, KeyCode};
@@ -13,12 +12,7 @@ use crate::app::PadFilterType;
 
 const POLL_TIMEOUT_MS: i32 = 5000;
 
-type SharedLeaseId = u64;
-type LeaseId = u64;
 type DeviceHash = u64;
-
-
-
 
 
 #[derive(Clone, PartialEq, Copy)]
@@ -50,9 +44,10 @@ pub enum PadButton {
     RightClick,
 }
 
+// Just using a shared counter because why not
+// Starts at 1 to ignore the non-zero issue.
+static BOTH_SHARED_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-
-// fastrand::u64(1..);
 type DeviceID = NonZeroU64;
 type UserID = u64;
 
@@ -93,7 +88,7 @@ impl DeviceRefrence {
     }
 
     pub fn new_orphan_nofix(state: &mut InputStateInner, device_id: Option<DeviceID>, name: String, hash: DeviceHash) -> Self {
-        let device_id = device_id.unwrap_or_else(|| NonZeroU64::new(fastrand::u64(1..)).unwrap());
+        let device_id = device_id.unwrap_or_else(|| NonZeroU64::new(BOTH_SHARED_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)).unwrap());
 
         let target = state.targets.entry(device_id).or_insert_with(|| {
             TargetDevice {
@@ -105,7 +100,7 @@ impl DeviceRefrence {
             }
         });
 
-        let user_id = fastrand::u64(..);
+        let user_id = BOTH_SHARED_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
         target.users.insert(user_id, (false, None, None));
 
@@ -572,5 +567,10 @@ impl InputState {
 
     pub fn clone_inner(&mut self) -> Arc<Mutex<InputStateInner>> {
         self.inner.clone()
+    }
+}
+impl Drop for InputState {
+    fn drop(&mut self) {
+        let _ = self.shutdown_tx.send(());
     }
 }
