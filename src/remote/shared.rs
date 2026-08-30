@@ -44,7 +44,9 @@ impl RemoteConnection {
         Ok(Self { thread, inner: con_inner_clone.clone(), channel: send })
     }
 
-    
+    pub fn update_session_data(&mut self, session_data: Option<Arc<Mutex<Session>>>) {
+        self.inner.lock().unwrap().session_data = session_data;
+    }
 }
 
 pub struct RemoteConnectionInner {

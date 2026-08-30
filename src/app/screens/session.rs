@@ -27,6 +27,7 @@ impl Screen for SessionScreen {
         let mut session_data = self.session_data.lock().unwrap();
 
         if !self.has_started {
+            state.remote_con.update_session_data(Some(self.session_data.clone()));
             self.has_started = true;
             let next_timeout = &mut Instant::now();
             
@@ -83,6 +84,7 @@ impl Screen for SessionScreen {
                     })
                 )
             );
+            state.remote_con.update_session_data(None);
             state.pending_route = Some(super::Route::Home)
         }
 

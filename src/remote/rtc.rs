@@ -2,13 +2,19 @@ use std::{path::PathBuf, sync::{Arc, Mutex, OnceLock}, time::Duration};
 
 use anyhow::Context;
 use eframe::egui::Color32;
-use evdev::{BusType, InputId};
+use evdev::{AbsInfo, AbsoluteAxisCode, BusType, InputId, KeyCode};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 use webrtc::{data_channel::{DataChannel, DataChannelEvent}, peer_connection::{MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceGatheringState, RTCIceServer, RTCPeerConnectionState, Registry, register_default_interceptors}, runtime::{Runtime, Sender, default_runtime}};
-use rtc::rtp_transceiver::rtp_sender::{RTCRtpHeaderExtensionCapability, RtpCodecKind};
+use rtc::{data_channel::RTCDataChannelInit, rtp_transceiver::rtp_sender::{RTCRtpHeaderExtensionCapability, RtpCodecKind}};
 
 use crate::remote::shared::RemoteConnectionInner;
+use crate::video::pipewire::PipewireID;
+
+
+/// TODO: temporary target until the client protocol requests real streams.
+/// PipeWire object id of the gamescope node every viewer gets for now.
+const HARDCODED_STREAM_PW_ID: PipewireID = 67;
 
 
 static RUNTIME: OnceLock<Arc<dyn Runtime>> = OnceLock::new();
@@ -39,6 +45,10 @@ impl PeerConnectionEventHandler for TestHandler {
         if state == RTCPeerConnectionState::Failed || state == RTCPeerConnectionState::Closed || state == RTCPeerConnectionState::Connected {
             let _ = self.done_tx.try_send(state);
         }
+    }
+
+    async fn on_data_channel(&self, data_channel: Arc<dyn DataChannel>) {
+        println!("Offered data channel: {:?}", data_channel.label().await)
     }
 }
 
@@ -127,15 +137,30 @@ impl RemoteClient {
             .build()
             .await?;
 
+        
+
         // Create a datachannel with label 'data'
-        let data_channel = pc.create_data_channel("data", None).await?;
+        // data_channel.id
         // std::mem::forget(data_channel); // TODO DONT DO THIS
         // tokio::spawn(async move {
         //     Self::message_handler(self_arc, data_channel).await.unwrap();
         // });
 
+        // Attach our outgoing video track before answering so the video m-line lands in the
+        // SDP answer (adding it afterwards would require renegotiation).
+        // let video_track =
+        //     crate::remote::encoder::create_h264_video_track(&pc, "partydeck-video").await?;
 
         pc.set_remote_description(serde_json::from_str(&offer_sdp)?).await?;
+
+
+        // let data_channel_REMOVE = pc.create_data_channel("AAAA", None).await?;
+        // std::mem::forget(data_channel_REMOVE);
+        // let data_channel = pc.create_data_channel("control_channel", None).await?;
+        let data_channel = pc.create_data_channel("control_channel", Some(RTCDataChannelInit {negotiated: Some(42),..Default::default()})).await?;
+
+
+
         let answer = pc.create_answer(None).await?;
         pc.set_local_description(answer).await?;
 
@@ -175,7 +200,49 @@ impl RemoteClient {
 
         self_arc.lock().unwrap().connected = true;
 
-        Self::main_message_loop(self_arc.clone(), data_channel, done_rx).await?; // Not sure if this is a good idea being fully ran 24/7 but IDRC
+        // // Transport is up: start this viewer's capture → encode pipeline. Dropping the
+        // // handle (when the message loop below ends) tears it back down.
+        // let pipewire = self_arc
+        //     .lock()
+        //     .unwrap()
+        //     .con_inner
+        //     .lock()
+        //     .unwrap()
+        //     .pipewire
+        //     .clone();
+        // let video_encoder = match pipewire {
+        //     Some(pipewire) => {
+        //         println!(
+        //             "remote video: streaming pipewire node {HARDCODED_STREAM_PW_ID} (hardcoded)"
+        //         );
+        //         match crate::remote::encoder::RemoteClientVideo::new(
+        //             &pipewire,
+        //             HARDCODED_STREAM_PW_ID,
+        //             video_track,
+        //             crate::remote::encoder::RemoteEncoderOptions::default(),
+        //         ) {
+        //             Ok(encoder) => Some(encoder),
+        //             Err(err) => {
+        //                 eprintln!("Failed to start remote video encoder: {err:#}");
+        //                 None
+        //             }
+        //         }
+        //     }
+        //     None => {
+        //         eprintln!("No PipeWire instance wired into the remote connection; no video");
+        //         None
+        //     }
+        // };
+
+        // let data_channel_REMOVE = pc.create_data_channel("BBBB", None).await?;
+        // println!("POLL TEST");
+        // println!("POLL TEST B {:?}", data_channel_REMOVE.poll().await);
+        // std::mem::forget(data_channel_REMOVE);
+
+        // pc.
+        Self::main_message_loop(self_arc.clone(), data_channel, done_rx).await.context("Main message processing loop")?; // Not sure if this is a good idea being fully ran 24/7 but IDRC
+
+        // drop(video_encoder);
 
         self_arc.lock().unwrap().connected = false;
 
@@ -183,10 +250,11 @@ impl RemoteClient {
     }
 
     async fn main_message_loop(self_arc: Arc<Mutex<Self>>, dc: Arc<dyn DataChannel>, mut done_rx: webrtc::runtime::Receiver<RTCPeerConnectionState>) -> anyhow::Result<()> {
-        let mut opt_dev = Self::create_uinput_if_possible().await.inspect_err(|e| eprintln!("Failed to create uinput virtual controller: {e:?}")).ok();
-        let mut selected_instance: Option<u64>;
+        let mut opt_uinput_dev = Self::create_uinput_if_possible().await.inspect_err(|e| eprintln!("Failed to create uinput virtual controller: {e:?}")).ok();
+        let mut selected_instance: Option<u64> = None;
 
         loop {
+            // println!("Waiting on datachannel message!");
             let datachannel_poll_data = {
                 tokio::select! {
                     msg_type = done_rx.recv() => {
@@ -197,25 +265,82 @@ impl RemoteClient {
                 }
             };
 
+            // println!("Handling datachannel message!: {datachannel_poll_data:?}");
 
             match datachannel_poll_data {
                 Some(DataChannelEvent::OnMessage(msg)) => {
-                    let msg_str = str::from_utf8(&msg.data)?;
-                    let msg_parsed = serde_json::from_str(msg_str)?;
+                    let msg_str = str::from_utf8(&msg.data).context("FAILED TO UTF8 DECODE")?;
+                    // println!("Parsed message as: {msg_str}");
+                    let msg_parsed = serde_json::from_str(msg_str).with_context(|| format!("FAILED TO DECODE SERDE MESSAGE: {msg_str}"))?;
+
                     
                     let resp_opt = match msg_parsed {
                         RTCClientMessage::Status => {
-                            Self::handle_status_msg(self_arc.clone(), msg_parsed)
+                            Self::handle_status_msg(self_arc.clone(), msg_parsed, opt_uinput_dev.is_some())
                         },
+                        RTCClientMessage::Select { id } => {
+                            let old_instance_id = selected_instance;
+                            selected_instance = id;
+                            
+                            if 
+                                let Some(ref uinput_dev) = opt_uinput_dev &&
+                                let Some(arc_running_session_data) = &self_arc.lock().unwrap().con_inner.lock().unwrap().session_data
+                            {
+                                let mut running_session_data = arc_running_session_data.lock().unwrap();
+                                
+                                if let Some(old_instance_id) = old_instance_id {
+                                    let old_instance = running_session_data.displays.iter_mut().find_map(|d| {
+                                        d.instances.iter_mut().find(|i| {
+                                            i.id.0 == old_instance_id
+                                        })
+                                    });
+
+                                    if 
+                                        let Some(old_instance) = old_instance &&
+                                        let Some(launched_instance) = &mut old_instance.launch_data &&
+                                        let Some(old_insatnce_proc) = &mut launched_instance.gamescope_proc
+                                    {
+                                        old_insatnce_proc.0.unbind_device(uinput_dev.1.to_string_lossy().trim_start_matches("/dev/input/").to_string());
+                                    }
+                                }
+
+                                if let Some(instance_id) = selected_instance {
+                                    let instance = running_session_data.displays.iter_mut().find_map(|d| {
+                                        d.instances.iter_mut().find(|i| {
+                                            i.id.0 == instance_id
+                                        })
+                                    });
+
+                                    if 
+                                        let Some(instance) = instance &&
+                                        let Some(launched_instance) = &mut instance.launch_data &&
+                                        let Some(insatnce_proc) = &mut launched_instance.gamescope_proc
+                                    {
+                                        insatnce_proc.0.bind_device(uinput_dev.1.to_string_lossy().trim_start_matches("/dev/input/").to_string());
+                                    }
+                                }
+                            }
+                            
+
+                            // TODO update the ffmpeg stream we are listening to.
+
+                            Ok(None)
+                        },
+                        // RTCClientMessage::Input { controller } => {
+                        //     selected_instance = id;
+                        //     // TODO update the ffmpeg stream we are listening to.
+
+                        //     Ok(None)
+                        // },
                         _ => {Ok(None)}
-                    }?;
+                    }.with_context(|| format!("Executing requested command: {msg_str}"))?;
 
 
                     if let Some(resp) = resp_opt {
-                        dc.send_text(&resp).await?;                        
+                        dc.send_text(&resp).await.context("Sening response")?;
                     }
                 },
-                Some(_) => {},
+                Some(a) => {}, // println!("IDK {a:#?}")
                 None => {
                     println!("WEBRTC connection closed!");
                     return Ok(());
@@ -224,7 +349,9 @@ impl RemoteClient {
         }
     }
 
-    fn handle_status_msg(self_arc: Arc<Mutex<Self>>, _msg_parsed: RTCClientMessage) -> anyhow::Result<Option<String>> {
+    fn handle_status_msg(self_arc: Arc<Mutex<Self>>, _msg_parsed: RTCClientMessage, has_controller_support: bool) -> anyhow::Result<Option<String>> {
+        // println!("Handle status message");
+        
         let session_data = { // Avoid locking for too long.
             let client_self = self_arc.lock().unwrap();
             let shared_self = client_self.con_inner.lock().unwrap();
@@ -249,7 +376,7 @@ impl RemoteClient {
                     })
                 }).collect();
 
-                RTCServerMessage::StatusStarted { instances: encoded_instance }
+                RTCServerMessage::StatusStarted { instances: encoded_instance, has_controller_support }
             },
             None => RTCServerMessage::StatusNotStarted
         };
@@ -258,11 +385,14 @@ impl RemoteClient {
     }
 
     async fn create_uinput_if_possible() -> anyhow::Result<(evdev::uinput::VirtualDevice, PathBuf)> {
-        let dev_builder = evdev::uinput::VirtualDevice::builder().context("Cant open uinput")?
-            // .with_(&evdev::AttributeSet::from_iter([evdev::EventType::KEY])).context("Invalid keys")?
-            .name(&"hi")
+        let mut dev_builder = evdev::uinput::VirtualDevice::builder().context("Cant open uinput")?
+            .name(&"Partydeck Virtual Remote Controller")
             .input_id(InputId::new(BusType::BUS_USB, 12, 12, 1))
-            .with_keys(&evdev::AttributeSet::from_iter([evdev::KeyCode::KEY_SPACE; 1])).context("Invalid keys")?;
+            .with_keys(&evdev::AttributeSet::from_iter(PARTY_DECK_REMOTE_CONTROLLER_BUTTONS)).context("Invalid keys")?;
+
+        for axis in PARTY_DECK_REMOTE_CONTROLLER_AXIS {
+            dev_builder = dev_builder.with_absolute_axis(&evdev::UinputAbsSetup::new(axis.0, AbsInfo::new(0, axis.1, axis.2, 0, 0, 0))).context("Invalid Axis")?;
+        }
 
         let mut dev = dev_builder.build().context("Failed to build")?;
         tokio::time::sleep(Duration::from_millis(500)).await; // The kernel scares me. Just give it time to calm down.
@@ -281,6 +411,19 @@ impl RemoteClient {
 enum RTCClientMessage {
     #[serde(rename = "status")]
     Status,
+
+    #[serde(rename = "select")]
+    Select {id: Option<u64>},
+
+
+    #[serde(rename = "keyboard_input")]
+    KeyboardInput {key: u64, pressed: bool},
+
+    #[serde(rename = "mouse_input")]
+    MouseInput {primary: bool, secondary: bool, tertiary: bool, dx: i16, dy: i16, scroll: i16},
+
+    #[serde(rename = "controller_input")]
+    ControllerInput {buttons: u64 /* PARTY_DECK_REMOTE_CONTROLLER_BUTTONS */, axis: [i32; PARTY_DECK_REMOTE_CONTROLLER_AXIS.len()]},
 }
 
 
@@ -291,7 +434,7 @@ enum RTCServerMessage {
     StatusNotStarted,
 
     #[serde(rename = "status_started")]
-    StatusStarted { instances: Vec<ServerInstanceInfo> },
+    StatusStarted { instances: Vec<ServerInstanceInfo>, has_controller_support: bool },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -301,3 +444,35 @@ struct ServerInstanceInfo {
     color: [u8; 4],
     alive: bool
 }
+
+static PARTY_DECK_REMOTE_CONTROLLER_BUTTONS: [KeyCode; 15] = [ // Used as a bitmask, only append to work with new protos.
+    KeyCode::BTN_SOUTH, // A
+    KeyCode::BTN_EAST,  // B
+    KeyCode::BTN_WEST,  // X
+    KeyCode::BTN_NORTH, // Y
+
+    KeyCode::BTN_TL,     // LB
+    KeyCode::BTN_TR,     // RB
+
+    KeyCode::BTN_THUMBL, // Left stick click
+    KeyCode::BTN_THUMBR, // Right stick click
+
+    KeyCode::BTN_SELECT, // Back / View
+    KeyCode::BTN_START,  // Menu / Start
+    KeyCode::BTN_MODE,   // Xbox button
+    
+    KeyCode::BTN_DPAD_UP,
+    KeyCode::BTN_DPAD_DOWN,
+    KeyCode::BTN_DPAD_LEFT,
+    KeyCode::BTN_DPAD_RIGHT
+];
+
+static PARTY_DECK_REMOTE_CONTROLLER_AXIS: [(AbsoluteAxisCode, i32, i32); 6] = [
+    (AbsoluteAxisCode::ABS_X, -32768, 32767),
+    (AbsoluteAxisCode::ABS_Y, -32768, 32767),
+    (AbsoluteAxisCode::ABS_RX, -32768, 32767),
+    (AbsoluteAxisCode::ABS_RY, -32768, 32767),
+    (AbsoluteAxisCode::ABS_Z, 0, 255), // Left trigger
+    (AbsoluteAxisCode::ABS_RZ, 0, 255), // Right trigger
+];
+
