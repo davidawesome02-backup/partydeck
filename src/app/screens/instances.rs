@@ -295,7 +295,7 @@ impl InstancesScreen {
             let mut device_add_remove = None;
 
             let mut input_state = state.input_state.inner();
-            for (dev_path, device) in input_state.devices.iter() {
+            for (dev_path, device) in input_state.devices_ordered() {
 
                 if device.device_type() == DeviceType::Other {continue;}
 

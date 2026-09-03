@@ -404,7 +404,7 @@ impl Instance {
 
             let mut dev_is_kbm = false;
             
-            for real_dev in input_state.devices.iter() {
+            for real_dev in input_state.devices_ordered() {
                 if real_dev.1.device_id == Some(dev.device_id) {
                     if let Some(path) = real_dev.0.clone().file_name().and_then(|fname| fname.to_str()).map(|fname| String::from(fname)) {
                         used_dev_paths.push(path);

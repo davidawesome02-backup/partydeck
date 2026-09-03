@@ -189,7 +189,7 @@ impl GamescopeWaylandState {
         Ok(())
     }
 
-    pub fn mouse_button(&mut self, button: u32, pressed: bool) -> Result<(), String> {
+    pub fn mouse_button(&mut self, button: u16, pressed: bool) -> Result<(), String> {
         let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
         /* input-event-codes.h
         #define BTN_LEFT		0x110
@@ -197,7 +197,7 @@ impl GamescopeWaylandState {
         #define BTN_MIDDLE		0x112
         */
 
-        input_interface.mouse_button(button, pressed as u32);
+        input_interface.mouse_button(button as u32, pressed as u32);
 
         self.has_data_to_send = true;
 
@@ -233,7 +233,7 @@ impl GamescopeWaylandState {
         if scroll == Vec2::ZERO { return Ok(()); }
 
         let input_interface = self.input_interface.as_ref().ok_or("No input interface accessable")?;
-        input_interface.mouse_scroll((scroll.x * 120.) as i32, (scroll.y * 120.) as i32); // Not best rounding here but should be fine
+        input_interface.mouse_scroll((-scroll.x * 120.) as i32, (-scroll.y * 120.) as i32); // Not best rounding here but should be fine
 
         self.has_data_to_send = true;
         Ok(())
@@ -282,14 +282,23 @@ impl InstanceStreamView {
         })
     }
 
-    pub fn inject_input(&mut self, input: InputEvent) -> Result<(), String> {
+    pub fn inject_input(&mut self, input: InputEvent) -> Result<(), String> { //todo absoulte positioning, and figuring out mouse buttons?
         let evt = input.destructure();
         // self.wayland_state.send_key(translated_key, true)?
         // println!("{:#?}", evt);
         match evt {
             evdev::EventSummary::Key(_key_event, key_code, held) => {
-                if held == 0 {self.wayland_state.send_key(key_code.0 as u32, false)?;}
-                if held == 1 {self.wayland_state.send_key(key_code.0 as u32, true)?;}
+                match key_code {
+                    evdev::KeyCode::BTN_LEFT | evdev::KeyCode::BTN_RIGHT | evdev::KeyCode::BTN_MIDDLE => {
+                        if held == 0 {self.wayland_state.mouse_button(key_code.0, false)?;}
+                        if held == 1 {self.wayland_state.mouse_button(key_code.0, true)?;}
+                    },
+                    _ => {
+                        if held == 0 {self.wayland_state.send_key(key_code.0 as u32, false)?;}
+                        if held == 1 {self.wayland_state.send_key(key_code.0 as u32, true)?;}
+                    }
+                }
+                
             },
             evdev::EventSummary::RelativeAxis(_relative_axis_event, relative_axis_code, move_amt) => {
                 match relative_axis_code {
@@ -299,6 +308,15 @@ impl InstanceStreamView {
                     RelativeAxisCode::REL_Y => {
                         self.wayland_state.mouse_move(Vec2 { x: 0.0, y: move_amt as f32 })?;
 
+                    }
+                    // RelativeAxisCode::REL_WHEEL => {
+                    //     self.wayland_state.mouse_scroll(Vec2 { x: 0.0, y: move_amt as f32 })?;
+                    // }
+                    RelativeAxisCode::REL_WHEEL_HI_RES => {
+                        self.wayland_state.mouse_scroll(Vec2 { x: 0.0, y: move_amt as f32 / 120.0 })?;
+                    }
+                    RelativeAxisCode::REL_HWHEEL_HI_RES => {
+                        self.wayland_state.mouse_scroll(Vec2 { x: move_amt as f32 / 120.0, y: 0.0 })?;
                     }
                     _ => {}
                 }
@@ -375,18 +393,14 @@ impl InstanceStreamView {
             // I have no idea how to do non-smooth scroll.
             self.wayland_state.mouse_scroll(ui.input(|i| i.smooth_scroll_delta()))?;
 
-            /* input-event-codes.h
-            #define BTN_LEFT		0x110
-            #define BTN_RIGHT		0x111
-            #define BTN_MIDDLE		0x112
-            */
+            
             for (button, code) in [
-                (egui::PointerButton::Primary, 0x110),
-                (egui::PointerButton::Secondary, 0x111),
-                (egui::PointerButton::Middle, 0x112),
+                (egui::PointerButton::Primary, evdev::KeyCode::BTN_LEFT),
+                (egui::PointerButton::Secondary, evdev::KeyCode::BTN_RIGHT),
+                (egui::PointerButton::Middle, evdev::KeyCode::BTN_MIDDLE),
             ] {
-                if current_pointer_state.button_pressed(button) { self.wayland_state.mouse_button(code, true)?; }
-                if current_pointer_state.button_released(button) { self.wayland_state.mouse_button(code, false)?; }
+                if current_pointer_state.button_pressed(button) { self.wayland_state.mouse_button(code.0, true)?; }
+                if current_pointer_state.button_released(button) { self.wayland_state.mouse_button(code.0, false)?; }
             }
         }
 

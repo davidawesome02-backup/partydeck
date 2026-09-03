@@ -8,7 +8,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use webrtc::{data_channel::{DataChannel, DataChannelEvent}, peer_connection::{MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceGatheringState, RTCIceServer, RTCPeerConnectionState, Registry, register_default_interceptors}, runtime::{Runtime, Sender, default_runtime}};
 use rtc::{data_channel::RTCDataChannelInit, rtp_transceiver::rtp_sender::{RTCRtpHeaderExtensionCapability, RtpCodecKind}};
 
-use crate::remote::shared::RemoteConnectionInner;
+use crate::{remote::shared::RemoteConnectionInner, session::InstanceInputEvt};
 use crate::video::pipewire::PipewireID;
 
 
@@ -251,7 +251,7 @@ impl RemoteClient {
 
     async fn main_message_loop(self_arc: Arc<Mutex<Self>>, dc: Arc<dyn DataChannel>, mut done_rx: webrtc::runtime::Receiver<RTCPeerConnectionState>) -> anyhow::Result<()> {
         let mut opt_uinput_dev = Self::create_uinput_if_possible().await.inspect_err(|e| eprintln!("Failed to create uinput virtual controller: {e:?}")).ok();
-        let mut selected_instance: Option<u64> = None;
+        let mut selected_instance: Option<(u64, Arc<Mutex<Vec<InstanceInputEvt>>>)> = None;
 
         loop {
             // println!("Waiting on datachannel message!");
@@ -278,53 +278,90 @@ impl RemoteClient {
                         RTCClientMessage::Status => {
                             Self::handle_status_msg(self_arc.clone(), msg_parsed, opt_uinput_dev.is_some())
                         },
-                        RTCClientMessage::Select { id } => {
-                            let old_instance_id = selected_instance;
-                            selected_instance = id;
-                            
+                        RTCClientMessage::Select { id: new_instance_id } => { // I hate this code, todo replace.
                             if 
-                                let Some(ref uinput_dev) = opt_uinput_dev &&
                                 let Some(arc_running_session_data) = &self_arc.lock().unwrap().con_inner.lock().unwrap().session_data
                             {
                                 let mut running_session_data = arc_running_session_data.lock().unwrap();
                                 
-                                if let Some(old_instance_id) = old_instance_id {
-                                    let old_instance = running_session_data.displays.iter_mut().find_map(|d| {
-                                        d.instances.iter_mut().find(|i| {
-                                            i.id.0 == old_instance_id
-                                        })
-                                    });
-
-                                    if 
-                                        let Some(old_instance) = old_instance &&
-                                        let Some(launched_instance) = &mut old_instance.launch_data &&
-                                        let Some(old_insatnce_proc) = &mut launched_instance.gamescope_proc
-                                    {
-                                        old_insatnce_proc.0.unbind_device(uinput_dev.1.to_string_lossy().trim_start_matches("/dev/input/").to_string());
-                                    }
+                                if 
+                                    let Some(ref selected_instance) = selected_instance &&
+                                    let Some(ref uinput_dev) = opt_uinput_dev 
+                                {                                    
+                                    selected_instance.1.lock().unwrap().push(
+                                        InstanceInputEvt::RemoveDev(
+                                            uinput_dev.1.to_string_lossy().trim_start_matches("/dev/input/").to_string()
+                                        )
+                                    );
                                 }
 
-                                if let Some(instance_id) = selected_instance {
+                                if let Some(new_instance_id) = new_instance_id {
                                     let instance = running_session_data.displays.iter_mut().find_map(|d| {
                                         d.instances.iter_mut().find(|i| {
-                                            i.id.0 == instance_id
+                                            i.id.0 == new_instance_id
                                         })
                                     });
 
                                     if 
                                         let Some(instance) = instance &&
-                                        let Some(launched_instance) = &mut instance.launch_data &&
-                                        let Some(insatnce_proc) = &mut launched_instance.gamescope_proc
+                                        let Some(launched_instance) = &mut instance.launch_data
                                     {
-                                        insatnce_proc.0.bind_device(uinput_dev.1.to_string_lossy().trim_start_matches("/dev/input/").to_string());
+                                        selected_instance = Some((new_instance_id, launched_instance.input_events.clone()));
+                                        
+                                        if let Some(ref uinput_dev) = opt_uinput_dev {
+                                            launched_instance.input_events.lock().unwrap().push(
+                                                InstanceInputEvt::AddDev(
+                                                    uinput_dev.1.to_string_lossy().trim_start_matches("/dev/input/").to_string()
+                                                )
+                                            );
+                                        }
+                                        
+                                    } else {
+                                        eprintln!("Failed to setup remote device to user");
+                                    selected_instance = None;
                                     }
+                                } else {
+                                    selected_instance = None;
                                 }
                             }
                             
 
-                            // TODO update the ffmpeg stream we are listening to.
+                            // TODO update the ffmpeg stream we are listening to too.
 
                             Ok(None)
+                        },
+                        RTCClientMessage::ButtonInput { key, pressed } => { // Keyboard OR mouse button
+                            if let Some(ref instance_data) = selected_instance {
+                                instance_data.1.lock().unwrap().push(InstanceInputEvt::InputEvt(
+                                    
+                                    //evdev::KeyCode::BTN_RIGHT or the like for the "key"
+                                    evdev::InputEvent::new(evdev::EventType::KEY.0, key, pressed.into())//if pressed {1} else {0})
+                                ));
+                            }
+
+                            Ok(None)
+                        },
+                        RTCClientMessage::MouseInput { dir, delta } => {
+
+                            if let Some(ref instance_data) = selected_instance {
+                                instance_data.1.lock().unwrap().push(InstanceInputEvt::InputEvt(
+                                    match dir {
+                                        MouseDirection::MouseX => evdev::InputEvent::new(evdev::EventType::RELATIVE.0, evdev::RelativeAxisCode::REL_X.0, delta),
+                                        MouseDirection::MouseY => evdev::InputEvent::new(evdev::EventType::RELATIVE.0, evdev::RelativeAxisCode::REL_Y.0, delta),
+                                        MouseDirection::ScrollX => evdev::InputEvent::new(evdev::EventType::RELATIVE.0, evdev::RelativeAxisCode::REL_HWHEEL_HI_RES.0, delta),
+                                        MouseDirection::Scrolly => evdev::InputEvent::new(evdev::EventType::RELATIVE.0, evdev::RelativeAxisCode::REL_WHEEL_HI_RES.0, delta),
+                                    }
+                                ));
+                            }
+
+                            // Todo fix mouse button handlings, so I dont have to send a input every time for up or down key.
+                            Ok(None)
+                            
+                        },
+                        RTCClientMessage::ControllerInput { buttons, axis } => {
+                            // Just send the controller input. Maybe buttons should be the delta buttons instead, but thats up for debate.
+                            Ok(None)
+                            
                         },
                         // RTCClientMessage::Input { controller } => {
                         //     selected_instance = id;
@@ -416,11 +453,11 @@ enum RTCClientMessage {
     Select {id: Option<u64>},
 
 
-    #[serde(rename = "keyboard_input")]
-    KeyboardInput {key: u64, pressed: bool},
+    #[serde(rename = "button_input")]
+    ButtonInput {key: u16, pressed: bool}, // Keyboard or Mouse button down.
 
     #[serde(rename = "mouse_input")]
-    MouseInput {primary: bool, secondary: bool, tertiary: bool, dx: i16, dy: i16, scroll: i16},
+    MouseInput {dir: MouseDirection, delta: i32},
 
     #[serde(rename = "controller_input")]
     ControllerInput {buttons: u64 /* PARTY_DECK_REMOTE_CONTROLLER_BUTTONS */, axis: [i32; PARTY_DECK_REMOTE_CONTROLLER_AXIS.len()]},
@@ -443,6 +480,16 @@ struct ServerInstanceInfo {
     name: String,
     color: [u8; 4],
     alive: bool
+}
+
+#[repr(u8)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+enum MouseDirection {
+    MouseX = 0,
+    MouseY = 1,
+    ScrollX = 2,
+    Scrolly = 3,
+    // maybe AbsMouseX & y.
 }
 
 static PARTY_DECK_REMOTE_CONTROLLER_BUTTONS: [KeyCode; 15] = [ // Used as a bitmask, only append to work with new protos.

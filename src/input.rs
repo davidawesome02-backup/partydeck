@@ -321,6 +321,14 @@ pub struct InputStateInner {
 }
 
 impl InputStateInner {
+    pub fn devices_ordered(&self) -> Vec<(&PathBuf, &InternalDevice)> {
+        let mut out = self.devices.iter().collect::<Vec<(&PathBuf, &InternalDevice)>>();
+        out.sort_by(|a, b| {
+            a.1.name().cmp(&b.1.name())
+        });
+        out
+    }
+
     fn new() -> Self {
         Self {
             devices: HashMap::new(),
@@ -383,7 +391,7 @@ impl InputStateInner {
                 }
             }
 
-            // Update device grab status here
+            // Update device grab status here for new devices
             if let Some(device_id) = dev.device_id {
                 if let Some(target) = self.targets.get(&device_id) {
                     let _ = if target.grabbed {dev.device.grab()} else {dev.device.ungrab()}; // TODO ADD BACK
@@ -398,6 +406,7 @@ impl InputStateInner {
                 target.grabbed = users_holding_grab;
 
                 for dev in self.devices.values_mut() {
+                    if dev.device_id != Some(target.device_id) {continue;} 
                     let _ = if target.grabbed {dev.device.grab()} else {dev.device.ungrab()}; // TODO ADD BACK
                 }
 
@@ -457,10 +466,8 @@ impl InputState {
 
             // scan existing devices
             if let Ok(mut guard) = thread_inner.lock() {
-                let mut enum_devs = evdev::enumerate().collect::<Vec<(PathBuf, Device)>>();
-                enum_devs.sort_by(|a, b| a.1.name().cmp(&b.1.name()));
-                
-                for devpath in enum_devs {
+
+                for devpath in evdev::enumerate().collect::<Vec<(PathBuf, Device)>>() {
                     if let Ok(device) = Device::open(&devpath.0) {
                         let _ = device.set_nonblocking(true);
                         guard.add_device_obj_nofix(devpath.0.clone(), device);
@@ -549,7 +556,8 @@ impl InputState {
                     }
 
                     // TODO REMOVE THIS SHOULD NOT BE NEEDED, LEFT IN CASE I FORGOT SOMEWHERE ELSE.
-                    guard.fix_users();
+                    // println!("G");
+                    // guard.fix_users();
                 }
             }
         });

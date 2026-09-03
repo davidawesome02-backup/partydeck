@@ -180,7 +180,8 @@ pub fn right_panel(state: &mut AppState, ui: &mut Ui) {
     ui.separator();
 
     let input_state = state.input_state.inner();
-    for dev in input_state.devices.values() {
+    for path_dev in input_state.devices_ordered() {
+        let dev = path_dev.1;
         if dev.device_type() == DeviceType::Other {continue;}
 
         
