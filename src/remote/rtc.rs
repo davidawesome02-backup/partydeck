@@ -1,7 +1,6 @@
 use std::{path::PathBuf, sync::{Arc, Mutex, OnceLock}, time::Duration};
 
 use anyhow::Context;
-use eframe::egui::Color32;
 use evdev::{AbsInfo, AbsoluteAxisCode, BusType, InputId, KeyCode};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
@@ -265,12 +264,9 @@ impl RemoteClient {
                 }
             };
 
-            // println!("Handling datachannel message!: {datachannel_poll_data:?}");
-
             match datachannel_poll_data {
                 Some(DataChannelEvent::OnMessage(msg)) => {
                     let msg_str = str::from_utf8(&msg.data).context("FAILED TO UTF8 DECODE")?;
-                    // println!("Parsed message as: {msg_str}");
                     let msg_parsed = serde_json::from_str(msg_str).with_context(|| format!("FAILED TO DECODE SERDE MESSAGE: {msg_str}"))?;
 
                     
@@ -330,46 +326,36 @@ impl RemoteClient {
 
                             Ok(None)
                         },
-                        RTCClientMessage::ButtonInput { key, pressed } => { // Keyboard OR mouse button
-                            if let Some(ref instance_data) = selected_instance {
-                                instance_data.1.lock().unwrap().push(InstanceInputEvt::InputEvt(
-                                    
-                                    //evdev::KeyCode::BTN_RIGHT or the like for the "key"
-                                    evdev::InputEvent::new(evdev::EventType::KEY.0, key, pressed.into())//if pressed {1} else {0})
-                                ));
+                        RTCClientMessage::RemoteInput { input_type, input_code, input_value } => { // Keyboard OR mouse button
+                            let constructed_event =
+                                evdev::InputEvent::new(
+                                    input_type,
+                                    input_code,
+                                    input_value
+                                );
+
+                            if
+                                let Some(ref mut virt_dev) = opt_uinput_dev &&
+                                ((
+                                    input_type == evdev::EventType::KEY.0 && 
+                                    PARTY_DECK_REMOTE_CONTROLLER_BUTTONS.contains(&KeyCode::new(input_code))
+                                ) || (
+                                    input_type == evdev::EventType::ABSOLUTE.0 && 
+                                    PARTY_DECK_REMOTE_CONTROLLER_AXIS.iter().any(
+                                        |a| a.0.0 == input_code
+                                    )
+                                ))
+                            {
+                                // Handle any valid controller events. We only support those we bound already.
+                                virt_dev.0.emit(&[constructed_event])?;
+                            } else if let Some(ref instance_data) = selected_instance {
+                                // Handle mouse and keyboard input or just drop it internally at this point. This lets the main system handle anything else.
+                                instance_data.1.lock().unwrap().push(InstanceInputEvt::InputEvt(constructed_event));
                             }
 
                             Ok(None)
                         },
-                        RTCClientMessage::MouseInput { dir, delta } => {
-
-                            if let Some(ref instance_data) = selected_instance {
-                                instance_data.1.lock().unwrap().push(InstanceInputEvt::InputEvt(
-                                    match dir {
-                                        MouseDirection::MouseX => evdev::InputEvent::new(evdev::EventType::RELATIVE.0, evdev::RelativeAxisCode::REL_X.0, delta),
-                                        MouseDirection::MouseY => evdev::InputEvent::new(evdev::EventType::RELATIVE.0, evdev::RelativeAxisCode::REL_Y.0, delta),
-                                        MouseDirection::ScrollX => evdev::InputEvent::new(evdev::EventType::RELATIVE.0, evdev::RelativeAxisCode::REL_HWHEEL_HI_RES.0, delta),
-                                        MouseDirection::Scrolly => evdev::InputEvent::new(evdev::EventType::RELATIVE.0, evdev::RelativeAxisCode::REL_WHEEL_HI_RES.0, delta),
-                                    }
-                                ));
-                            }
-
-                            // Todo fix mouse button handlings, so I dont have to send a input every time for up or down key.
-                            Ok(None)
-                            
-                        },
-                        RTCClientMessage::ControllerInput { buttons, axis } => {
-                            // Just send the controller input. Maybe buttons should be the delta buttons instead, but thats up for debate.
-                            Ok(None)
-                            
-                        },
-                        // RTCClientMessage::Input { controller } => {
-                        //     selected_instance = id;
-                        //     // TODO update the ffmpeg stream we are listening to.
-
-                        //     Ok(None)
-                        // },
-                        _ => {Ok(None)}
+                        // _ => {Ok(None)}
                     }.with_context(|| format!("Executing requested command: {msg_str}"))?;
 
 
@@ -377,17 +363,17 @@ impl RemoteClient {
                         dc.send_text(&resp).await.context("Sening response")?;
                     }
                 },
-                Some(a) => {}, // println!("IDK {a:#?}")
-                None => {
+                None | Some(DataChannelEvent::OnClose) => {
                     println!("WEBRTC connection closed!");
                     return Ok(());
                 }
+                _ => {},
             }
         }
     }
 
     fn handle_status_msg(self_arc: Arc<Mutex<Self>>, _msg_parsed: RTCClientMessage, has_controller_support: bool) -> anyhow::Result<Option<String>> {
-        // println!("Handle status message");
+
         
         let session_data = { // Avoid locking for too long.
             let client_self = self_arc.lock().unwrap();
@@ -404,7 +390,7 @@ impl RemoteClient {
                         ServerInstanceInfo {
                             id: i.id.0,
                             name: i.profname.clone(),
-                            color: i.color.to_array(),
+                            color: i.color.to_hex(),
                             alive: i.is_alive_or_starting(),
                         }
                         // i.launch_data.map(|ld| {
@@ -452,15 +438,8 @@ enum RTCClientMessage {
     #[serde(rename = "select")]
     Select {id: Option<u64>},
 
-
-    #[serde(rename = "button_input")]
-    ButtonInput {key: u16, pressed: bool}, // Keyboard or Mouse button down.
-
-    #[serde(rename = "mouse_input")]
-    MouseInput {dir: MouseDirection, delta: i32},
-
-    #[serde(rename = "controller_input")]
-    ControllerInput {buttons: u64 /* PARTY_DECK_REMOTE_CONTROLLER_BUTTONS */, axis: [i32; PARTY_DECK_REMOTE_CONTROLLER_AXIS.len()]},
+    #[serde(rename = "remote_input")]
+    RemoteInput {input_type: u16, input_code: u16, input_value: i32}
 }
 
 
@@ -478,18 +457,8 @@ enum RTCServerMessage {
 struct ServerInstanceInfo {
     id: u64,
     name: String,
-    color: [u8; 4],
+    color: String,
     alive: bool
-}
-
-#[repr(u8)]
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-enum MouseDirection {
-    MouseX = 0,
-    MouseY = 1,
-    ScrollX = 2,
-    Scrolly = 3,
-    // maybe AbsMouseX & y.
 }
 
 static PARTY_DECK_REMOTE_CONTROLLER_BUTTONS: [KeyCode; 15] = [ // Used as a bitmask, only append to work with new protos.
