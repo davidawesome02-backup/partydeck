@@ -461,7 +461,7 @@ struct ServerInstanceInfo {
     alive: bool
 }
 
-static PARTY_DECK_REMOTE_CONTROLLER_BUTTONS: [KeyCode; 15] = [ // Used as a bitmask, only append to work with new protos.
+static PARTY_DECK_REMOTE_CONTROLLER_BUTTONS: [KeyCode; 17] = [ // Used as a bitmask, only append to work with new protos.
     KeyCode::BTN_SOUTH, // A
     KeyCode::BTN_EAST,  // B
     KeyCode::BTN_WEST,  // X
@@ -470,25 +470,29 @@ static PARTY_DECK_REMOTE_CONTROLLER_BUTTONS: [KeyCode; 15] = [ // Used as a bitm
     KeyCode::BTN_TL,     // LB
     KeyCode::BTN_TR,     // RB
 
-    KeyCode::BTN_THUMBL, // Left stick click
-    KeyCode::BTN_THUMBR, // Right stick click
+    KeyCode::BTN_TL2, // Take a wild guess
+    KeyCode::BTN_TR2, // Take a wild guess
 
     KeyCode::BTN_SELECT, // Back / View
     KeyCode::BTN_START,  // Menu / Start
-    KeyCode::BTN_MODE,   // Xbox button
+
+    KeyCode::BTN_THUMBL, // Left stick click
+    KeyCode::BTN_THUMBR, // Right stick click
     
     KeyCode::BTN_DPAD_UP,
     KeyCode::BTN_DPAD_DOWN,
     KeyCode::BTN_DPAD_LEFT,
-    KeyCode::BTN_DPAD_RIGHT
+    KeyCode::BTN_DPAD_RIGHT,
+
+    KeyCode::BTN_MODE   // Xbox button
 ];
 
-static PARTY_DECK_REMOTE_CONTROLLER_AXIS: [(AbsoluteAxisCode, i32, i32); 6] = [
+static PARTY_DECK_REMOTE_CONTROLLER_AXIS: [(AbsoluteAxisCode, i32, i32); 4] = [
     (AbsoluteAxisCode::ABS_X, -32768, 32767),
     (AbsoluteAxisCode::ABS_Y, -32768, 32767),
     (AbsoluteAxisCode::ABS_RX, -32768, 32767),
     (AbsoluteAxisCode::ABS_RY, -32768, 32767),
-    (AbsoluteAxisCode::ABS_Z, 0, 255), // Left trigger
-    (AbsoluteAxisCode::ABS_RZ, 0, 255), // Right trigger
+    // (AbsoluteAxisCode::ABS_Z, 0, 255), // Left trigger
+    // (AbsoluteAxisCode::ABS_RZ, 0, 255), // Right trigger
 ];
 
