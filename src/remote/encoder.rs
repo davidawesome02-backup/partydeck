@@ -849,6 +849,10 @@ fn open_encoder(
         dict.set("strict", "experimental");
     }
 
+    dict.set("flags", "+global_header");
+    dict.set("repeat_pps", "1");
+
+
     Ok(ctx.open_as_with(codec, dict)?)
 }
 

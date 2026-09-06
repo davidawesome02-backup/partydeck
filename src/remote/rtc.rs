@@ -56,6 +56,7 @@ const FRAME_DURATION: Duration = Duration::from_nanos((1_000_000_000 + TARGET_FP
 /// Signaled codec: constrained-baseline, packetization-mode 1. Matches the encoder's
 /// constrained_baseline profile so every browser can decode it.
 const H264_FMTP: &str = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f";
+// const H264_FMTP: &str = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e1f";
 
 /// A sending H.264 track bound to the peer connection, plus its SSRC/sender handles.
 pub struct ClientVideoTrack {
@@ -110,45 +111,58 @@ async fn writer_task(
     video: ClientVideoTrack,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<Bytes>,
 ) {
-    // Payload type only becomes stable once SDP negotiation finishes; resolve lazily and
-    // drop frames until then instead of buffering latency.
-    let mut payload_type: Option<PayloadType> = None;
+    let mut h264_payload_type: Option<PayloadType> = None;
+    let clock_rate = 90_000u32; // H.264 uses 90kHz clock
 
     while let Some(data) = rx.recv().await {
-        // let data = strip_annexb_start_codes(&data);
-        // println!("A - {:?}",data);
-        // std::process::abort();
-        if payload_type.is_none() {
-            payload_type = video
+        if h264_payload_type.is_none() {
+            h264_payload_type = video
                 .sender
                 .get_parameters()
                 .await
                 .ok()
-                .and_then(|p| p.rtp_parameters.codecs.first().map(|c| c.payload_type));
-            if payload_type.is_none() {
+                .and_then(|p| {
+                    // Find H.264 codec, not the first codec
+                    p.rtp_parameters.codecs.iter()
+                        .find(|c| c.rtp_codec.mime_type.contains("H264") || c.rtp_codec.mime_type.contains("h264"))
+                        .map(|c| c.payload_type)
+                });
+            
+            if h264_payload_type.is_none() {
+                eprintln!("H.264 codec not found in SDP!");
                 continue;
             }
         }
 
-        let sample = Sample {
-            data,
-            duration: FRAME_DURATION,
-            timestamp: rtc::shared::time::SystemInstant::now(),
-            ..Default::default()
-        };
-        let result = video
-            .track
-            .sample_writer(video.ssrc, payload_type.unwrap())
-            .with_extension(HeaderExtension::PlayoutDelay(PlayoutDelayExtension::new(0, 0)))
-            .write_sample(&sample)
-            .await;
-        if let Err(err) = result {
-            eprintln!("remote: rtp write failed: {err}");
-        }
+        // Parse Annex-B stream and extract NALUs
+        let nalus = extract_nalus(&data);
+        
+        for nalu in nalus {
+            let sample = Sample {
+                data: Bytes::copy_from_slice(&nalu),
+                duration: Duration::from_millis(33), // ~30fps
+                timestamp: rtc::shared::time::SystemInstant::now(),
+                ..Default::default()
+            };
 
-        // println!("Wrote sample!");
+            let result = video
+                .track
+                .sample_writer(video.ssrc, h264_payload_type.unwrap())
+                .with_extension(HeaderExtension::PlayoutDelay(
+                    PlayoutDelayExtension::new(0, 0),
+                ))
+                .write_sample(&sample)
+                .await;
+
+            if let Err(err) = result {
+                eprintln!("rtp write failed: {err}");
+            }
+            // println!("SPS profile-level-id: {}", parse_h264_profile(&nalu));
+        }
+        // std::process::abort();
     }
 }
+
 fn extract_nalus(data: &[u8]) -> Vec<Vec<u8>> {
     let mut nalus = Vec::new();
     let mut i = 0;
@@ -184,6 +198,21 @@ fn extract_nalus(data: &[u8]) -> Vec<Vec<u8>> {
 
     nalus
 }
+
+fn parse_h264_profile(nalu: &[u8]) -> String {
+    if !nalu.is_empty() && (nalu[0] & 0x1F) == 7 {
+        // This is an SPS NALU
+        if nalu.len() >= 4 {
+            let profile = nalu[1];
+            let level = nalu[3];
+            return format!("{:02x}e{:02x}", profile, level);
+        }
+    }
+    "unknown".to_string()
+}
+
+
+
 
 pub struct RemoteClient {
     connected: bool,
