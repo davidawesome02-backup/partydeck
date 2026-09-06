@@ -122,94 +122,38 @@ async fn writer_task(
                 .await
                 .ok()
                 .and_then(|p| {
-                    // Find H.264 codec, not the first codec
+                    // Find H.264 codec that matches your encoder's actual profile
                     p.rtp_parameters.codecs.iter()
-                        .find(|c| c.rtp_codec.mime_type.contains("H264") || c.rtp_codec.mime_type.contains("h264"))
+                        .find(|c| {
+                            c.rtp_codec.sdp_fmtp_line == H264_FMTP
+                        })
                         .map(|c| c.payload_type)
                 });
-            
-            if h264_payload_type.is_none() {
-                eprintln!("H.264 codec not found in SDP!");
-                continue;
-            }
+
         }
 
-        // Parse Annex-B stream and extract NALUs
-        let nalus = extract_nalus(&data);
-        
-        for nalu in nalus {
-            let sample = Sample {
-                data: Bytes::copy_from_slice(&nalu),
-                duration: Duration::from_millis(33), // ~30fps
-                timestamp: rtc::shared::time::SystemInstant::now(),
-                ..Default::default()
-            };
-
-            let result = video
-                .track
-                .sample_writer(video.ssrc, h264_payload_type.unwrap())
-                .with_extension(HeaderExtension::PlayoutDelay(
-                    PlayoutDelayExtension::new(0, 0),
-                ))
-                .write_sample(&sample)
-                .await;
-
-            if let Err(err) = result {
-                eprintln!("rtp write failed: {err}");
-            }
-            // println!("SPS profile-level-id: {}", parse_h264_profile(&nalu));
-        }
-        // std::process::abort();
-    }
-}
-
-fn extract_nalus(data: &[u8]) -> Vec<Vec<u8>> {
-    let mut nalus = Vec::new();
-    let mut i = 0;
-
-    while i < data.len() {
-        // Find start code: 0x00 0x00 0x00 0x01 or 0x00 0x00 0x01
-        let sc_len = if i + 4 <= data.len() && &data[i..i+4] == &[0, 0, 0, 1] {
-            4
-        } else if i + 3 <= data.len() && &data[i..i+3] == &[0, 0, 1] {
-            3
-        } else {
-            i += 1;
-            continue;
+        let sample = Sample {
+            data: data,
+            duration: Duration::from_millis(33), // ~30fps
+            timestamp: rtc::shared::time::SystemInstant::now(),
+            ..Default::default()
         };
 
-        i += sc_len;
-        let nalu_start = i;
+        let result = video
+            .track
+            .sample_writer(video.ssrc, h264_payload_type.unwrap())
+            .with_extension(HeaderExtension::PlayoutDelay(
+                PlayoutDelayExtension::new(0, 0),
+            ))
+            .write_sample(&sample)
+            .await;
 
-        // Find end of NALU (next start code or EOF)
-        while i < data.len() {
-            if (i + 4 <= data.len() && &data[i..i+4] == &[0, 0, 0, 1])
-                || (i + 3 <= data.len() && &data[i..i+3] == &[0, 0, 1])
-            {
-                break;
-            }
-            i += 1;
-        }
-
-        if nalu_start < i {
-            nalus.push(data[nalu_start..i].to_vec());
+        if let Err(err) = result {
+            eprintln!("rtp write failed: {err}");
         }
     }
-
-    nalus
 }
 
-fn parse_h264_profile(nalu: &[u8]) -> String {
-    if !nalu.is_empty() && (nalu[0] & 0x1F) == 7 {
-        // This is an SPS NALU
-        if nalu.len() >= 4 {
-            let profile = nalu[1];
-            let level = nalu[3];
-            return format!("{:02x}e{:02x}", profile, level);
-        }
-    }
-    "unknown".to_string()
-}
 
 
 
@@ -370,7 +314,7 @@ impl RemoteClient {
             let _ = packet_tx.send(Bytes::copy_from_slice(data));
         })).unwrap();
         
-        std::mem::forget(encoder_ref_instance);
+        // std::mem::forget(encoder_ref_instance);
 
 
 
