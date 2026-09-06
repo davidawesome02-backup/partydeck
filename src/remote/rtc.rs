@@ -11,10 +11,6 @@ use crate::{remote::{encoder::EncoderRegistry, shared::RemoteConnectionInner}, s
 use crate::video::pipewire::PipewireID;
 
 
-/// TODO: temporary target until the client protocol requests real streams.
-/// PipeWire object id of the gamescope node every viewer gets for now.
-const HARDCODED_STREAM_PW_ID: PipewireID = 67;
-
 
 static RUNTIME: OnceLock<Arc<dyn Runtime>> = OnceLock::new();
 pub fn runtime() -> Arc<dyn Runtime> {
@@ -201,7 +197,7 @@ impl RemoteClient {
 
 
         std::mem::forget(encoder.lock().unwrap().listen(91, Box::new(|a: &[u8], b: i64, c: bool| {
-            println!("{a:#?} {b} {c}");
+            // println!("d");
         })).unwrap());
 
 
