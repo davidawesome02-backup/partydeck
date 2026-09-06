@@ -39,6 +39,7 @@ webrtc = "0.20.3"
 rtc = "0.20.3"
 async-trait = "0.1.92"
 ffmpeg-next = { version = "9.0.0", default-features = false, features = ["codec", "filter", "format"] } #, "build"
+bytes = "1"
 
 
 [patch.crates-io]

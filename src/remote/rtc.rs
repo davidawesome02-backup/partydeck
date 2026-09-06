@@ -4,12 +4,12 @@ use anyhow::Context;
 use evdev::{AbsInfo, AbsoluteAxisCode, BusType, InputId, KeyCode};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
-use webrtc::{data_channel::{DataChannel, DataChannelEvent}, peer_connection::{MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceGatheringState, RTCIceServer, RTCPeerConnectionState, Registry, register_default_interceptors}, runtime::{Runtime, Sender, default_runtime}};
-use rtc::{data_channel::RTCDataChannelInit, rtp_transceiver::rtp_sender::{RTCRtpHeaderExtensionCapability, RtpCodecKind}};
+use webrtc::{data_channel::{DataChannel, DataChannelEvent}, media_stream::track_local::{TrackLocal, static_sample::TrackLocalStaticSample}, peer_connection::{MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceGatheringState, RTCIceServer, RTCPeerConnectionState, Registry, register_default_interceptors}, rtp_transceiver::RtpSender, runtime::{Runtime, Sender, default_runtime}};
+use rtc::{data_channel::RTCDataChannelInit, media::Sample, media_stream::MediaStreamTrack, rtp::extension::{HeaderExtension, playout_delay_extension::PlayoutDelayExtension}, rtp_transceiver::{PayloadType, SSRC, rtp_sender::{RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RTCRtpHeaderExtensionCapability, RtpCodecKind}}};
 
 use crate::{remote::{encoder::EncoderRegistry, shared::RemoteConnectionInner}, session::InstanceInputEvt};
 use crate::video::pipewire::PipewireID;
-
+use bytes::{self, Bytes};
 
 
 static RUNTIME: OnceLock<Arc<dyn Runtime>> = OnceLock::new();
@@ -47,6 +47,143 @@ impl PeerConnectionEventHandler for TestHandler {
     }
 }
 
+
+ 
+const RTP_CLOCK_RATE: i32 = 90_000;
+const TARGET_FPS: u64 = 60;
+const FRAME_DURATION: Duration = Duration::from_nanos((1_000_000_000 + TARGET_FPS - 1) / TARGET_FPS);
+
+/// Signaled codec: constrained-baseline, packetization-mode 1. Matches the encoder's
+/// constrained_baseline profile so every browser can decode it.
+const H264_FMTP: &str = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f";
+
+/// A sending H.264 track bound to the peer connection, plus its SSRC/sender handles.
+pub struct ClientVideoTrack {
+    pub track: Arc<TrackLocalStaticSample>,
+    pub sender: Arc<dyn RtpSender>,
+    pub ssrc: SSRC,
+}
+
+/// Creates an H.264 `TrackLocalStaticSample` and adds it to the peer connection.
+/// Must be called before the SDP answer is produced so the video m-line lands in the answer.
+async fn create_h264_video_track<P: PeerConnection + ?Sized>(
+    pc: &P,
+    stream_id: &str,
+) -> anyhow::Result<ClientVideoTrack> {
+    let ssrc = fastrand::u32(..) | 1;
+    let codec = RTCRtpCodec {
+        mime_type: rtc::peer_connection::configuration::media_engine::MIME_TYPE_H264.to_owned(),
+        clock_rate: RTP_CLOCK_RATE as u32,
+        channels: 0,
+        sdp_fmtp_line: H264_FMTP.to_owned(),
+        rtcp_feedback: vec![],
+    };
+
+    let track = Arc::new(TrackLocalStaticSample::new(MediaStreamTrack::new(
+        stream_id.to_owned(),
+        format!("partydeck-video-{ssrc}"),
+        "gamescope-capture".to_owned(),
+        RtpCodecKind::Video,
+        vec![RTCRtpEncodingParameters {
+            rtp_coding_parameters: RTCRtpCodingParameters {
+                ssrc: Some(ssrc),
+                ..Default::default()
+            },
+            codec,
+            ..Default::default()
+        }],
+    ))?);
+
+    let sender = pc.add_track(track.clone() as Arc<dyn TrackLocal>).await?;
+    println!("Added track!");
+
+    Ok(ClientVideoTrack {
+        track,
+        sender,
+        ssrc,
+    })
+}
+
+/// Async glue: pushes encoded access units onto the RTP track with the playout-delay header
+/// extension (min = max = 0: play out as soon as decoded) stamped on every packet.
+async fn writer_task(
+    video: ClientVideoTrack,
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<Bytes>,
+) {
+    // Payload type only becomes stable once SDP negotiation finishes; resolve lazily and
+    // drop frames until then instead of buffering latency.
+    let mut payload_type: Option<PayloadType> = None;
+
+    while let Some(data) = rx.recv().await {
+        // let data = strip_annexb_start_codes(&data);
+        // println!("A - {:?}",data);
+        // std::process::abort();
+        if payload_type.is_none() {
+            payload_type = video
+                .sender
+                .get_parameters()
+                .await
+                .ok()
+                .and_then(|p| p.rtp_parameters.codecs.first().map(|c| c.payload_type));
+            if payload_type.is_none() {
+                continue;
+            }
+        }
+
+        let sample = Sample {
+            data,
+            duration: FRAME_DURATION,
+            timestamp: rtc::shared::time::SystemInstant::now(),
+            ..Default::default()
+        };
+        let result = video
+            .track
+            .sample_writer(video.ssrc, payload_type.unwrap())
+            .with_extension(HeaderExtension::PlayoutDelay(PlayoutDelayExtension::new(0, 0)))
+            .write_sample(&sample)
+            .await;
+        if let Err(err) = result {
+            eprintln!("remote: rtp write failed: {err}");
+        }
+
+        // println!("Wrote sample!");
+    }
+}
+fn extract_nalus(data: &[u8]) -> Vec<Vec<u8>> {
+    let mut nalus = Vec::new();
+    let mut i = 0;
+
+    while i < data.len() {
+        // Find start code: 0x00 0x00 0x00 0x01 or 0x00 0x00 0x01
+        let sc_len = if i + 4 <= data.len() && &data[i..i+4] == &[0, 0, 0, 1] {
+            4
+        } else if i + 3 <= data.len() && &data[i..i+3] == &[0, 0, 1] {
+            3
+        } else {
+            i += 1;
+            continue;
+        };
+
+        i += sc_len;
+        let nalu_start = i;
+
+        // Find end of NALU (next start code or EOF)
+        while i < data.len() {
+            if (i + 4 <= data.len() && &data[i..i+4] == &[0, 0, 0, 1])
+                || (i + 3 <= data.len() && &data[i..i+3] == &[0, 0, 1])
+            {
+                break;
+            }
+            i += 1;
+        }
+
+        if nalu_start < i {
+            nalus.push(data[nalu_start..i].to_vec());
+        }
+    }
+
+    nalus
+}
 
 pub struct RemoteClient {
     connected: bool,
@@ -143,8 +280,7 @@ impl RemoteClient {
 
         // Attach our outgoing video track before answering so the video m-line lands in the
         // SDP answer (adding it afterwards would require renegotiation).
-        // let video_track =
-        //     crate::remote::encoder::create_h264_video_track(&pc, "partydeck-video").await?;
+        
 
         pc.set_remote_description(serde_json::from_str(&offer_sdp)?).await?;
 
@@ -153,7 +289,10 @@ impl RemoteClient {
         // std::mem::forget(data_channel_REMOVE);
         // let data_channel = pc.create_data_channel("control_channel", None).await?;
         let data_channel = pc.create_data_channel("control_channel", Some(RTCDataChannelInit {negotiated: Some(42),..Default::default()})).await?;
-
+        
+        let video_track =
+            create_h264_video_track(&pc, "partydeck-video").await?;
+        
 
 
         let answer = pc.create_answer(None).await?;
@@ -195,10 +334,16 @@ impl RemoteClient {
 
         self_arc.lock().unwrap().connected = true;
 
+        let (packet_tx, packet_rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+        runtime.clone().spawn(Box::pin(writer_task(video_track, packet_rx)));
 
-        std::mem::forget(encoder.lock().unwrap().listen(91, Box::new(|a: &[u8], b: i64, c: bool| {
-            // println!("d");
-        })).unwrap());
+        let encoder_ref_instance = encoder.lock().unwrap().listen(91, Box::new(move |data: &[u8], b: i64, c: bool| {
+            let _ = packet_tx.send(Bytes::copy_from_slice(data));
+        })).unwrap();
+        
+        std::mem::forget(encoder_ref_instance);
+
+
 
 
        

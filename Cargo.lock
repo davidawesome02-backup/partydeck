@@ -3668,6 +3668,7 @@ version = "0.8.5"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bytes",
  "bzip2",
  "eframe",
  "egui_extras",
