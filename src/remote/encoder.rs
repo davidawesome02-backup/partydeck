@@ -141,14 +141,11 @@ impl EncoderRegistry {
                 Arc::new(Mutex::new(HashMap::new()));
             let keyframe_requested = Arc::new(AtomicBool::new(false));
 
+            let latest_frame_tx_clone = latest_frame_tx.clone();
             let pw_listener = PipewireListener::new(
                 self.pw_channel.clone(),
                 pw_id,
-                Box::new(capture_callback(
-                    self.pw_streams.clone(),
-                    pw_id,
-                    latest_frame_tx.clone(),
-                )),
+                Box::new(move || {let _ = latest_frame_tx_clone.try_send(());}),
             );
 
             let callbacks_clone = callbacks.clone();
@@ -204,29 +201,6 @@ impl Drop for EncoderReference {
     }
 }
 
-/// PipeWire callback: runs on PipeWire mainloop thread.
-/// Just sends a notification that a new frame is available.
-/// Encoder thread reads the latest frame directly from stream state.
-fn capture_callback(
-    streams: Arc<StdRwLock<HashMap<PipewireID, Arc<StdRwLock<PipewireStream>>>>>,
-    pw_id: PipewireID,
-    tx: SyncSender<FrameSignal>,
-) -> impl FnMut() + Send + Sync + 'static {
-    move || {
-        // println!("C");
-        // Check if stream exists and has a frame
-        // let has_frame = {
-        //     let map = streams.read().unwrap();
-        //     map.get(&pw_id).unwrap().read().unwrap().latest_frame.is_some()
-        // };
-        // if !has_frame {
-        //     return;
-        // }
-        // Notify encoder thread - drop old notification if encoder is slow
-        let _ = tx.try_send(());
-    }
-}
-
 /// Encoder thread: receives frame notifications, reads latest frame from stream, encodes to H.264.
 /// Runs on a dedicated thread to avoid blocking PipeWire or WebRTC.
 fn encoder_thread_inner(
@@ -237,7 +211,7 @@ fn encoder_thread_inner(
     keyframe_requested: Arc<AtomicBool>,
     mut opts: EncoderOptions,
 ) -> Result<()> {
-    opts.bitrate_bps = 40_000;
+    opts.bitrate_bps = 4_000_000;
     let mut session: Option<HwEncodeSession> = None;
     let mut last_err = std::time::Instant::now() - Duration::from_secs(10);
 

@@ -259,6 +259,8 @@ pub struct InstanceStreamView {
 
     last_keys_down: HashSet<egui::Key>,
     last_pointer_pos: Option<Vec2>,
+
+    pub pipewire_node: u32,
 }
 
 impl InstanceStreamView {
@@ -279,6 +281,7 @@ impl InstanceStreamView {
             wayland_state,
             last_keys_down: HashSet::new(),
             last_pointer_pos: None,
+            pipewire_node
         })
     }
 

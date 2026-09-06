@@ -7,7 +7,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use webrtc::{data_channel::{DataChannel, DataChannelEvent}, media_stream::track_local::{TrackLocal, static_sample::TrackLocalStaticSample}, peer_connection::{MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceGatheringState, RTCIceServer, RTCPeerConnectionState, Registry, register_default_interceptors}, rtp_transceiver::RtpSender, runtime::{Runtime, Sender, default_runtime}};
 use rtc::{data_channel::RTCDataChannelInit, media::Sample, media_stream::MediaStreamTrack, rtp::extension::{HeaderExtension, playout_delay_extension::PlayoutDelayExtension}, rtp_transceiver::{PayloadType, SSRC, rtp_sender::{RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RTCRtpHeaderExtensionCapability, RtpCodecKind}}};
 
-use crate::{remote::{encoder::EncoderRegistry, shared::RemoteConnectionInner}, session::InstanceInputEvt};
+use crate::{remote::{encoder::{EncoderReference, EncoderRegistry}, shared::RemoteConnectionInner}, session::InstanceInputEvt};
 use crate::video::pipewire::PipewireID;
 use bytes::{self, Bytes};
 
@@ -307,12 +307,10 @@ impl RemoteClient {
 
         self_arc.lock().unwrap().connected = true;
 
-        let (packet_tx, packet_rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
-        runtime.clone().spawn(Box::pin(writer_task(video_track, packet_rx)));
+        let (video_packet_tx, video_packet_rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+        runtime.clone().spawn(Box::pin(writer_task(video_track, video_packet_rx)));
 
-        let encoder_ref_instance = encoder.lock().unwrap().listen(91, Box::new(move |data: &[u8], b: i64, c: bool| {
-            let _ = packet_tx.send(Bytes::copy_from_slice(data));
-        })).unwrap();
+        
         
         // std::mem::forget(encoder_ref_instance);
 
@@ -328,7 +326,7 @@ impl RemoteClient {
         // std::mem::forget(data_channel_REMOVE);
 
         // pc.
-        Self::main_message_loop(self_arc.clone(), data_channel, done_rx).await.context("Main message processing loop")?; // Not sure if this is a good idea being fully ran 24/7 but IDRC
+        Self::main_message_loop(self_arc.clone(), data_channel, done_rx, encoder, video_packet_tx).await.context("Main message processing loop")?; // Not sure if this is a good idea being fully ran 24/7 but IDRC
 
         // drop(video_encoder);
 
@@ -337,9 +335,9 @@ impl RemoteClient {
         Ok(())
     }
 
-    async fn main_message_loop(self_arc: Arc<Mutex<Self>>, dc: Arc<dyn DataChannel>, mut done_rx: webrtc::runtime::Receiver<RTCPeerConnectionState>) -> anyhow::Result<()> {
+    async fn main_message_loop(self_arc: Arc<Mutex<Self>>, dc: Arc<dyn DataChannel>, mut done_rx: webrtc::runtime::Receiver<RTCPeerConnectionState>, encoder: Arc<Mutex<EncoderRegistry>>, video_packet_tx: UnboundedSender<Bytes>) -> anyhow::Result<()> {
         let mut opt_uinput_dev = Self::create_uinput_if_possible().await.inspect_err(|e| eprintln!("Failed to create uinput virtual controller: {e:?}")).ok();
-        let mut selected_instance: Option<(u64, Arc<Mutex<Vec<InstanceInputEvt>>>)> = None;
+        let mut selected_instance: Option<(u64, Arc<Mutex<Vec<InstanceInputEvt>>>, Option<EncoderReference>)> = None;
 
         loop {
             // println!("Waiting on datachannel message!");
@@ -391,7 +389,22 @@ impl RemoteClient {
                                         let Some(instance) = instance &&
                                         let Some(launched_instance) = &mut instance.launch_data
                                     {
-                                        selected_instance = Some((new_instance_id, launched_instance.input_events.clone()));
+
+                                        let new_encoder_ref = { // TODO make this not terrible
+                                            let tmp_encoder_clone = encoder.clone();
+                                            let tmp_video_packet_tx_clone = video_packet_tx.clone();
+                                            launched_instance.stream_view.as_ref().and_then(move |sv| {
+                                                tmp_encoder_clone.lock().unwrap().listen(sv.pipewire_node, Box::new(move |data: &[u8], _: i64, _: bool| {
+                                                    let _ = tmp_video_packet_tx_clone.send(Bytes::copy_from_slice(data));
+                                                })).inspect_err(|e| eprintln!("Failed to create encoder for view: {e:#?}")).ok()
+                                            })
+                                        };
+
+                                        selected_instance = Some((
+                                            new_instance_id, 
+                                            launched_instance.input_events.clone(), 
+                                            new_encoder_ref
+                                        ));
                                         
                                         if let Some(ref uinput_dev) = opt_uinput_dev {
                                             launched_instance.input_events.lock().unwrap().push(
@@ -403,7 +416,7 @@ impl RemoteClient {
                                         
                                     } else {
                                         eprintln!("Failed to setup remote device to user");
-                                    selected_instance = None;
+                                        selected_instance = None;
                                     }
                                 } else {
                                     selected_instance = None;
