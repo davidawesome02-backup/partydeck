@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{select, sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel}};
 use tokio_tungstenite::{self, tungstenite};
 
-use crate::{remote::rtc::RemoteClient, session::Session, video::pipewire::PipewireID};
+use crate::{remote::{encoder::EncoderRegistry, rtc::RemoteClient}, session::Session, video::pipewire::PipewireID};
 
 type ws_type = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -23,12 +23,12 @@ pub struct RemoteConnection {
     pub inner: Arc<Mutex<RemoteConnectionInner>>,
 }
 impl RemoteConnection {
-    pub fn new() -> Result<Self, std::io::Error> {
+    pub fn new(encoder: Arc<Mutex<EncoderRegistry>>) -> Result<Self, std::io::Error> {
 
         let (send, rec) = unbounded_channel();
         
         let con_inner = Arc::new(Mutex::new(
-            RemoteConnectionInner{ session_data: None, code: None, connected: false, clients: HashMap::new() }
+            RemoteConnectionInner{ session_data: None, code: None, connected: false, clients: HashMap::new(), encoder }
         ));
         let con_inner_clone = con_inner.clone();
         
@@ -54,6 +54,7 @@ pub struct RemoteConnectionInner {
     pub code: Option<String>,
     pub connected: bool,
     clients: HashMap<String, Arc<Mutex<RemoteClient>>>,
+    encoder: Arc<Mutex<EncoderRegistry>>,
 }
 
 impl RemoteConnectionInner {
@@ -150,9 +151,10 @@ impl RemoteConnectionInner {
             },
             WsMessage::Offer { offer, client_id } => {
                 let mut self_ = self_arc.lock().unwrap();
+                let encoder_clone = self_.encoder.clone();
                 self_.clients.insert(
                     client_id.clone(),
-                    RemoteClient::new(offer, client_id, msg_resp, self_arc.clone())
+                    RemoteClient::new(offer, client_id, msg_resp, self_arc.clone(), encoder_clone)
                 );
             },
             WsMessage::ClientError { client_error, client_id } => todo!(),

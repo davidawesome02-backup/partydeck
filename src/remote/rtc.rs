@@ -7,7 +7,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use webrtc::{data_channel::{DataChannel, DataChannelEvent}, peer_connection::{MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceGatheringState, RTCIceServer, RTCPeerConnectionState, Registry, register_default_interceptors}, runtime::{Runtime, Sender, default_runtime}};
 use rtc::{data_channel::RTCDataChannelInit, rtp_transceiver::rtp_sender::{RTCRtpHeaderExtensionCapability, RtpCodecKind}};
 
-use crate::{remote::shared::RemoteConnectionInner, session::InstanceInputEvt};
+use crate::{remote::{encoder::EncoderRegistry, shared::RemoteConnectionInner}, session::InstanceInputEvt};
 use crate::video::pipewire::PipewireID;
 
 
@@ -58,19 +58,19 @@ pub struct RemoteClient {
     con_inner: Arc<Mutex<RemoteConnectionInner>>
 }
 impl RemoteClient {
-    pub fn new(offer: String, id: String, msg_resp: UnboundedSender<String>, con_inner: Arc<Mutex<RemoteConnectionInner>>) -> Arc<Mutex<Self>> {
+    pub fn new(offer: String, id: String, msg_resp: UnboundedSender<String>, con_inner: Arc<Mutex<RemoteConnectionInner>>, encoder: Arc<Mutex<EncoderRegistry>>) -> Arc<Mutex<Self>> {
 
-        let ret_self = Arc::new(Mutex::new(Self { connected: false, id: id.clone(), con_inner  }));
+        let ret_self = Arc::new(Mutex::new(Self { connected: false, id: id.clone(), con_inner }));
         let self_arc = ret_self.clone();
         
         tokio::spawn(async move {
-            Self::inner(self_arc, offer, id, msg_resp).await.unwrap();
+            Self::inner(self_arc, offer, id, msg_resp, encoder).await.unwrap();
         });
 
         ret_self
     }
 
-    async fn inner(self_arc: Arc<Mutex<Self>>, offer_sdp: String, ws_id: String, msg_resp: UnboundedSender<String>) -> anyhow::Result<()> {
+    async fn inner(self_arc: Arc<Mutex<Self>>, offer_sdp: String, ws_id: String, msg_resp: UnboundedSender<String>, encoder: Arc<Mutex<EncoderRegistry>>) -> anyhow::Result<()> {
         let (done_tx, mut done_rx) = webrtc::runtime::channel::<RTCPeerConnectionState>(1);
         let (gather_complete_tx, mut gather_complete_rx) = webrtc::runtime::channel(1);
 
@@ -199,39 +199,14 @@ impl RemoteClient {
 
         self_arc.lock().unwrap().connected = true;
 
-        // // Transport is up: start this viewer's capture → encode pipeline. Dropping the
-        // // handle (when the message loop below ends) tears it back down.
-        // let pipewire = self_arc
-        //     .lock()
-        //     .unwrap()
-        //     .con_inner
-        //     .lock()
-        //     .unwrap()
-        //     .pipewire
-        //     .clone();
-        // let video_encoder = match pipewire {
-        //     Some(pipewire) => {
-        //         println!(
-        //             "remote video: streaming pipewire node {HARDCODED_STREAM_PW_ID} (hardcoded)"
-        //         );
-        //         match crate::remote::encoder::RemoteClientVideo::new(
-        //             &pipewire,
-        //             HARDCODED_STREAM_PW_ID,
-        //             video_track,
-        //             crate::remote::encoder::RemoteEncoderOptions::default(),
-        //         ) {
-        //             Ok(encoder) => Some(encoder),
-        //             Err(err) => {
-        //                 eprintln!("Failed to start remote video encoder: {err:#}");
-        //                 None
-        //             }
-        //         }
-        //     }
-        //     None => {
-        //         eprintln!("No PipeWire instance wired into the remote connection; no video");
-        //         None
-        //     }
-        // };
+
+        std::mem::forget(encoder.lock().unwrap().listen(91, Box::new(|a: &[u8], b: i64, c: bool| {
+            println!("{a:#?} {b} {c}");
+        })).unwrap());
+
+
+       
+        // listen
 
         // let data_channel_REMOVE = pc.create_data_channel("BBBB", None).await?;
         // println!("POLL TEST");

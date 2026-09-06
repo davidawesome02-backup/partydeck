@@ -19,6 +19,7 @@ use crate::video::pipewire::{
 use anyhow::{Context as _, Result};
 use ffmpeg_next::{codec, dictionary, ffi, format::Pixel, frame, rational::Rational};
 use nix::unistd;
+use pipewire::channel::Sender;
 
 static ENCODER_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -104,13 +105,21 @@ struct EncoderInner {
     _encoder_thread: JoinHandle<()>,
 }
 
+
+use std::sync::RwLock;
+use crate::video::pipewire::PipewireCommand;
+
 pub struct EncoderRegistry {
+    pw_channel: Sender<PipewireCommand>,
+    pw_streams: Arc<RwLock<HashMap<u32, Arc<RwLock<PipewireStream>>>>>,
     encoders: Arc<Mutex<HashMap<PipewireID, EncoderInner>>>,
 }
 
 impl EncoderRegistry {
-    pub fn new() -> Self {
+    pub fn new(pipewire: &PipewireInstance) -> Self {
         Self {
+            pw_channel: pipewire.channel.clone(),
+            pw_streams: pipewire.streams.clone(),
             encoders: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -119,7 +128,6 @@ impl EncoderRegistry {
     /// Callback receives (packet_data, pts_90khz, is_keyframe).
     pub fn listen(
         &self,
-        pipewire: &PipewireInstance,
         pw_id: PipewireID,
         callback: EncoderCallback,
     ) -> Result<EncoderReference> {
@@ -133,10 +141,10 @@ impl EncoderRegistry {
             let keyframe_requested = Arc::new(AtomicBool::new(false));
 
             let pw_listener = PipewireListener::new(
-                pipewire.channel.clone(),
+                self.pw_channel.clone(),
                 pw_id,
                 Box::new(capture_callback(
-                    pipewire.streams.clone(),
+                    self.pw_streams.clone(),
                     pw_id,
                     latest_frame_tx.clone(),
                 )),
@@ -144,7 +152,7 @@ impl EncoderRegistry {
 
             let callbacks_clone = callbacks.clone();
             let keyframe_clone = keyframe_requested.clone();
-            let streams_clone = pipewire.streams.clone();
+            let streams_clone = self.pw_streams.clone();
             let encoder_thread = thread::spawn(move || {
                 if let Err(e) = encoder_thread_inner(
                     streams_clone,
@@ -204,14 +212,15 @@ fn capture_callback(
     tx: SyncSender<FrameSignal>,
 ) -> impl FnMut() + Send + Sync + 'static {
     move || {
+        println!("C");
         // Check if stream exists and has a frame
-        let has_frame = {
-            let map = streams.read().unwrap();
-            map.get(&pw_id).unwrap().read().unwrap().latest_frame.is_some()
-        };
-        if !has_frame {
-            return;
-        }
+        // let has_frame = {
+        //     let map = streams.read().unwrap();
+        //     map.get(&pw_id).unwrap().read().unwrap().latest_frame.is_some()
+        // };
+        // if !has_frame {
+        //     return;
+        // }
         // Notify encoder thread - drop old notification if encoder is slow
         let _ = tx.try_send(());
     }
@@ -231,6 +240,7 @@ fn encoder_thread_inner(
     let mut last_err = std::time::Instant::now() - Duration::from_secs(10);
 
     while frame_rx.recv().is_ok() {
+        println!("A");
         // Read latest frame from PipeWire stream state
         let frame = {
             let map = streams.read().ok().context("Streams read failed")?;
@@ -414,8 +424,8 @@ impl HwEncodeSession {
         }
 
         let src_args = CString::new(format!(
-            "video_size={width}x{height}:pix_fmt={}:time_base=1/{RTP_CLOCK_RATE}:pixel_aspect=1/1",
-            backend.pix_fmt_name()
+            "video_size={width}x{height}:time_base=1/{RTP_CLOCK_RATE}:pixel_aspect=1/1",
+            // backend.pix_fmt_name()
         ))?;
         let mut src_ctx = ptr::null_mut();
         let mut sink_ctx = ptr::null_mut();

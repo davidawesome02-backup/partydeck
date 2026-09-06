@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use eframe::egui;
+use std::sync::Mutex;
 
 use super::config::{PartyConfig, load_cfg};
 use super::screens::Route;
@@ -15,6 +16,7 @@ use crate::session::{InstanceId, Session};
 use crate::video::egl::EglApi;
 use crate::video::pipewire::PipewireInstance;
 use crate::input;
+use crate::remote::encoder;
 
 pub struct AppState {
     pub options: PartyConfig,
@@ -37,6 +39,8 @@ pub struct AppState {
     pub input_state: input::InputState,
 
     pub remote_con: shared::RemoteConnection,
+
+    // pub encoder: encoder::EncoderRegistry
 }
 
 pub enum Mode {
@@ -92,9 +96,11 @@ impl AppState {
             .inspect_err(|e| eprintln!("Failed to start pipewire thread: {e}"))
             .ok();
 
+        let encoder = encoder::EncoderRegistry::new(pipewire.as_ref().unwrap());
+
         let input_state = input::InputState::new().unwrap();
 
-        let remote_con = shared::RemoteConnection::new().unwrap();
+        let remote_con = shared::RemoteConnection::new(Arc::new(Mutex::new(encoder))).unwrap();
         remote_con.channel.send(shared::RemoteCommand::Connect).unwrap();
 
         Self {
@@ -110,7 +116,8 @@ impl AppState {
             egl,
             pipewire,
             input_state,
-            remote_con
+            remote_con,
+            // encoder
         }
     }
 
