@@ -5,7 +5,7 @@ use evdev::{AbsInfo, AbsoluteAxisCode, BusType, InputId, KeyCode};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 use webrtc::{data_channel::{DataChannel, DataChannelEvent}, media_stream::track_local::{TrackLocal, static_sample::TrackLocalStaticSample}, peer_connection::{MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceGatheringState, RTCIceServer, RTCPeerConnectionState, Registry, register_default_interceptors}, rtp_transceiver::RtpSender, runtime::{Runtime, Sender, default_runtime}};
-use rtc::{data_channel::RTCDataChannelInit, media::Sample, media_stream::MediaStreamTrack, rtp::extension::{HeaderExtension, playout_delay_extension::PlayoutDelayExtension}, rtp_transceiver::{PayloadType, SSRC, rtp_sender::{RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RTCRtpHeaderExtensionCapability, RtpCodecKind}}};
+use rtc::{data_channel::RTCDataChannelInit, media::Sample, media_stream::MediaStreamTrack, peer_connection::configuration::media_engine::{MIME_TYPE_H264, MIME_TYPE_RTX}, rtp::extension::{HeaderExtension, playout_delay_extension::PlayoutDelayExtension}, rtp_transceiver::{PayloadType, SSRC, rtp_sender::{RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters, RTCRtpHeaderExtensionCapability, RtpCodecKind}}};
 
 use crate::{remote::{encoder::{EncoderReference, EncoderRegistry}, shared::RemoteConnectionInner}, session::InstanceInputEvt};
 use crate::video::pipewire::PipewireID;
@@ -93,9 +93,9 @@ async fn create_h264_video_track<P: PeerConnection + ?Sized>(
             codec,
             ..Default::default()
         }],
-    ))?);
+    )).context("Creating new track")?);
 
-    let sender = pc.add_track(track.clone() as Arc<dyn TrackLocal>).await?;
+    let sender = pc.add_track(track.clone() as Arc<dyn TrackLocal>).await.context("Adding track")?;
     println!("Added track!");
 
     Ok(ClientVideoTrack {
@@ -188,7 +188,50 @@ impl RemoteClient {
         });
 
         let mut media_engine = MediaEngine::default();
-        media_engine.register_default_codecs()?;
+        // media_engine.register_default_codecs()?;
+
+        let video_rtcp_feedback = vec![
+            RTCPFeedback {
+                typ: "goog-remb".to_owned(),
+                parameter: "".to_owned(),
+            },
+            RTCPFeedback {
+                typ: "ccm".to_owned(),
+                parameter: "fir".to_owned(),
+            },
+            RTCPFeedback {
+                typ: "nack".to_owned(),
+                parameter: "".to_owned(),
+            },
+            RTCPFeedback {
+                typ: "nack".to_owned(),
+                parameter: "pli".to_owned(),
+            },
+        ];
+        
+        let codec = RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_H264.to_owned(),
+                clock_rate: RTP_CLOCK_RATE as u32,
+                channels: 0,
+                sdp_fmtp_line:
+                    H264_FMTP.to_owned(),
+                rtcp_feedback: video_rtcp_feedback.clone(),
+            },
+            payload_type: 108,
+        };
+        let rtx_codec = |payload_type: PayloadType, apt: PayloadType| RTCRtpCodecParameters {
+            rtp_codec: RTCRtpCodec {
+                mime_type: MIME_TYPE_RTX.to_owned(),
+                clock_rate: 90000,
+                channels: 0,
+                sdp_fmtp_line: format!("apt={apt}"),
+                rtcp_feedback: vec![],
+            },
+            payload_type,
+        };
+        media_engine.register_codec(codec, RtpCodecKind::Video)?;
+        media_engine.register_codec(rtx_codec(109, 108), RtpCodecKind::Video)?;
 
 
         const PLAYOUT_DELAY_URI: &str = "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay";
@@ -264,7 +307,7 @@ impl RemoteClient {
         let data_channel = pc.create_data_channel("control_channel", Some(RTCDataChannelInit {negotiated: Some(42),..Default::default()})).await?;
         
         let video_track =
-            create_h264_video_track(&pc, "partydeck-video").await?;
+            create_h264_video_track(&pc, "partydeck-video").await.context("Making h264 video track")?;
         
 
 
