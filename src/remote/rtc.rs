@@ -1,14 +1,11 @@
-use std::{path::PathBuf, sync::{Arc, Mutex, OnceLock}, time::Duration};
+use std::{sync::{Arc, Mutex, OnceLock}, time::Duration};
 
 use anyhow::Context;
-use evdev::{AbsInfo, AbsoluteAxisCode, BusType, InputId, KeyCode};
-use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 use webrtc::{data_channel::{DataChannel, DataChannelEvent}, media_stream::track_local::{TrackLocal, static_sample::TrackLocalStaticSample}, peer_connection::{MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceGatheringState, RTCIceServer, RTCPeerConnectionState, Registry, register_default_interceptors}, rtp_transceiver::RtpSender, runtime::{Runtime, Sender, default_runtime}};
 use rtc::{data_channel::RTCDataChannelInit, media::Sample, media_stream::MediaStreamTrack, peer_connection::configuration::media_engine::{MIME_TYPE_H264, MIME_TYPE_RTX}, rtp::extension::{HeaderExtension, playout_delay_extension::PlayoutDelayExtension}, rtp_transceiver::{PayloadType, SSRC, rtp_sender::{RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters, RTCRtpHeaderExtensionCapability, RtpCodecKind}}};
 
-use crate::{remote::{encoder::{EncoderReference, EncoderRegistry}, shared::RemoteConnectionInner}, session::InstanceInputEvt};
-use crate::video::pipewire::PipewireID;
+use crate::{remote::{connection::{create_uinput_if_possible, handle_remote_message}, encoder::{EncoderReference, EncoderRegistry}, websocket::RemoteConnectionInner}, session::InstanceInputEvt};
 use bytes::{self, Bytes};
 
 
@@ -95,7 +92,7 @@ async fn create_h264_video_track<P: PeerConnection + ?Sized>(
         }],
     )).context("Creating new track")?);
 
-    let sender = pc.add_track(track.clone() as Arc<dyn TrackLocal>).await.context("Adding track")?;
+    let sender = pc.add_track(track.clone() as Arc<dyn TrackLocal>).await.context("Adding track - If you get this while on firefox, please enable h264 extentions!")?;
     println!("Added track!");
 
     Ok(ClientVideoTrack {
@@ -112,7 +109,6 @@ async fn writer_task(
     mut rx: tokio::sync::mpsc::UnboundedReceiver<Bytes>,
 ) {
     let mut h264_payload_type: Option<PayloadType> = None;
-    let clock_rate = 90_000u32; // H.264 uses 90kHz clock
 
     while let Some(data) = rx.recv().await {
         if h264_payload_type.is_none() {
@@ -129,12 +125,11 @@ async fn writer_task(
                         })
                         .map(|c| c.payload_type)
                 });
-
         }
 
         let sample = Sample {
             data: data,
-            duration: Duration::from_millis(33), // ~30fps
+            duration: Duration::from_millis(33), // ~30fps - doesnt matter at all.
             timestamp: rtc::shared::time::SystemInstant::now(),
             ..Default::default()
         };
@@ -155,13 +150,116 @@ async fn writer_task(
 }
 
 
+async fn create_peer_connection(runtime: Arc<dyn Runtime>, handler: Arc<TestHandler>) -> anyhow::Result<impl PeerConnection> {
 
+    let mut media_engine = MediaEngine::default();
+    // Instead of this single line but that adds like 30 lines of every answer, I just hard code the one I use.
+    // Most of this code is extracted from this method:
+    // media_engine.register_default_codecs()?;
+
+    let video_rtcp_feedback = vec![
+        RTCPFeedback {
+            typ: "goog-remb".to_owned(),
+            parameter: "".to_owned(),
+        },
+        RTCPFeedback {
+            typ: "ccm".to_owned(),
+            parameter: "fir".to_owned(),
+        },
+        RTCPFeedback {
+            typ: "nack".to_owned(),
+            parameter: "".to_owned(),
+        },
+        RTCPFeedback {
+            typ: "nack".to_owned(),
+            parameter: "pli".to_owned(),
+        },
+    ];
+    
+    let codec = RTCRtpCodecParameters {
+        rtp_codec: RTCRtpCodec {
+            mime_type: MIME_TYPE_H264.to_owned(),
+            clock_rate: RTP_CLOCK_RATE as u32,
+            channels: 0,
+            sdp_fmtp_line:
+                H264_FMTP.to_owned(),
+            rtcp_feedback: video_rtcp_feedback.clone(),
+        },
+        payload_type: 108,
+    };
+    let rtx_codec = |payload_type: PayloadType, apt: PayloadType| RTCRtpCodecParameters {
+        rtp_codec: RTCRtpCodec {
+            mime_type: MIME_TYPE_RTX.to_owned(),
+            clock_rate: 90000,
+            channels: 0,
+            sdp_fmtp_line: format!("apt={apt}"),
+            rtcp_feedback: vec![],
+        },
+        payload_type,
+    };
+    media_engine.register_codec(codec, RtpCodecKind::Video)?;
+    media_engine.register_codec(rtx_codec(109, 108), RtpCodecKind::Video)?;
+
+
+    const PLAYOUT_DELAY_URI: &str = "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay";
+
+    media_engine
+        .register_header_extension(
+            RTCRtpHeaderExtensionCapability {
+                uri: PLAYOUT_DELAY_URI.to_string(),
+            },
+            RtpCodecKind::Video,
+            None,
+        )
+        .expect("register playout delay extension");
+    media_engine
+        .register_header_extension(
+            RTCRtpHeaderExtensionCapability {
+                uri: PLAYOUT_DELAY_URI.to_string(),
+            },
+            RtpCodecKind::Audio,
+            None,
+        )
+        .expect("register playout delay extension");
+
+
+    let registry = Registry::new();
+    // Use the default set of Interceptors
+    let registry = register_default_interceptors(registry, &mut media_engine)?;
+
+    let config = RTCConfigurationBuilder::new()
+        .with_ice_servers(vec![RTCIceServer {
+            urls: vec![
+                "stun:stun.l.google.com:19302".to_string(),
+                "stun:stun1.l.google.com:19302".to_string()
+            ],
+            ..Default::default()
+        }, RTCIceServer {
+            urls: vec![
+                "stun:stun.nextcloud.com:443".to_string()
+            ],
+            ..Default::default()
+        }])
+        .build();
+
+    let pc = PeerConnectionBuilder::new()
+        .with_configuration(config)
+        .with_media_engine(media_engine)
+        .with_interceptor_registry(registry)
+        .with_handler(handler)
+        .with_runtime(runtime.clone())
+        .with_udp_addrs(vec![format!("0.0.0.0:0")])
+        .build()
+        .await?;
+
+    Ok(pc)
+}
 
 
 pub struct RemoteClient {
     connected: bool,
     id: String,
-    con_inner: Arc<Mutex<RemoteConnectionInner>>
+    pub con_inner: Arc<Mutex<RemoteConnectionInner>>
 }
 impl RemoteClient {
     pub fn new(offer: String, id: String, msg_resp: UnboundedSender<String>, con_inner: Arc<Mutex<RemoteConnectionInner>>, encoder: Arc<Mutex<EncoderRegistry>>) -> Arc<Mutex<Self>> {
@@ -180,136 +278,26 @@ impl RemoteClient {
         let (done_tx, mut done_rx) = webrtc::runtime::channel::<RTCPeerConnectionState>(1);
         let (gather_complete_tx, mut gather_complete_rx) = webrtc::runtime::channel(1);
 
+
         let runtime = runtime();
+
 
         let handler = Arc::new(TestHandler {
             gather_complete_tx,
             done_tx,
         });
 
-        let mut media_engine = MediaEngine::default();
-        // media_engine.register_default_codecs()?;
-
-        let video_rtcp_feedback = vec![
-            RTCPFeedback {
-                typ: "goog-remb".to_owned(),
-                parameter: "".to_owned(),
-            },
-            RTCPFeedback {
-                typ: "ccm".to_owned(),
-                parameter: "fir".to_owned(),
-            },
-            RTCPFeedback {
-                typ: "nack".to_owned(),
-                parameter: "".to_owned(),
-            },
-            RTCPFeedback {
-                typ: "nack".to_owned(),
-                parameter: "pli".to_owned(),
-            },
-        ];
-        
-        let codec = RTCRtpCodecParameters {
-            rtp_codec: RTCRtpCodec {
-                mime_type: MIME_TYPE_H264.to_owned(),
-                clock_rate: RTP_CLOCK_RATE as u32,
-                channels: 0,
-                sdp_fmtp_line:
-                    H264_FMTP.to_owned(),
-                rtcp_feedback: video_rtcp_feedback.clone(),
-            },
-            payload_type: 108,
-        };
-        let rtx_codec = |payload_type: PayloadType, apt: PayloadType| RTCRtpCodecParameters {
-            rtp_codec: RTCRtpCodec {
-                mime_type: MIME_TYPE_RTX.to_owned(),
-                clock_rate: 90000,
-                channels: 0,
-                sdp_fmtp_line: format!("apt={apt}"),
-                rtcp_feedback: vec![],
-            },
-            payload_type,
-        };
-        media_engine.register_codec(codec, RtpCodecKind::Video)?;
-        media_engine.register_codec(rtx_codec(109, 108), RtpCodecKind::Video)?;
-
-
-        const PLAYOUT_DELAY_URI: &str = "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay";
-
-        media_engine
-            .register_header_extension(
-                RTCRtpHeaderExtensionCapability {
-                    uri: PLAYOUT_DELAY_URI.to_string(),
-                },
-                RtpCodecKind::Video,
-                None,
-            )
-            .expect("register playout delay extension");
-        media_engine
-            .register_header_extension(
-                RTCRtpHeaderExtensionCapability {
-                    uri: PLAYOUT_DELAY_URI.to_string(),
-                },
-                RtpCodecKind::Audio,
-                None,
-            )
-            .expect("register playout delay extension");
-
-
-        let registry = Registry::new();
-        // Use the default set of Interceptors
-        let registry = register_default_interceptors(registry, &mut media_engine)?;
-
-        let config = RTCConfigurationBuilder::new()
-            .with_ice_servers(vec![RTCIceServer {
-                urls: vec![
-                    "stun:stun.l.google.com:19302".to_string(),
-                    "stun:stun1.l.google.com:19302".to_string()
-                ],
-                ..Default::default()
-            }, RTCIceServer {
-                urls: vec![
-                    "stun:stun.services.mozilla.com:3478".to_string()
-                ],
-                ..Default::default()
-            }])
-            .build();
-
-        let pc = PeerConnectionBuilder::new()
-            .with_configuration(config)
-            .with_media_engine(media_engine)
-            .with_interceptor_registry(registry)
-            .with_handler(handler)
-            .with_runtime(runtime.clone())
-            .with_udp_addrs(vec![format!("0.0.0.0:0")])
-            .build()
-            .await?;
-
-        
-
-        // Create a datachannel with label 'data'
-        // data_channel.id
-        // std::mem::forget(data_channel); // TODO DONT DO THIS
-        // tokio::spawn(async move {
-        //     Self::message_handler(self_arc, data_channel).await.unwrap();
-        // });
-
-        // Attach our outgoing video track before answering so the video m-line lands in the
-        // SDP answer (adding it afterwards would require renegotiation).
+        let pc = create_peer_connection(runtime.clone(), handler).await.context("Creating peer connection")?;
         
 
         pc.set_remote_description(serde_json::from_str(&offer_sdp)?).await?;
 
 
-        // let data_channel_REMOVE = pc.create_data_channel("AAAA", None).await?;
-        // std::mem::forget(data_channel_REMOVE);
-        // let data_channel = pc.create_data_channel("control_channel", None).await?;
         let data_channel = pc.create_data_channel("control_channel", Some(RTCDataChannelInit {negotiated: Some(42),..Default::default()})).await?;
         
         let video_track =
             create_h264_video_track(&pc, "partydeck-video").await.context("Making h264 video track")?;
         
-
 
         let answer = pc.create_answer(None).await?;
         pc.set_local_description(answer).await?;
@@ -354,36 +342,31 @@ impl RemoteClient {
         runtime.clone().spawn(Box::pin(writer_task(video_track, video_packet_rx)));
 
         
-        
-        // std::mem::forget(encoder_ref_instance);
+        Self::main_message_loop(
+            self_arc.clone(), 
+            data_channel, 
+            done_rx, 
+            encoder, 
+            video_packet_tx
+        ).await.context("Main message processing loop")?; // Not sure if this is a good idea being fully ran 24/7 but IDRC
 
-
-
-
-       
-        // listen
-
-        // let data_channel_REMOVE = pc.create_data_channel("BBBB", None).await?;
-        // println!("POLL TEST");
-        // println!("POLL TEST B {:?}", data_channel_REMOVE.poll().await);
-        // std::mem::forget(data_channel_REMOVE);
-
-        // pc.
-        Self::main_message_loop(self_arc.clone(), data_channel, done_rx, encoder, video_packet_tx).await.context("Main message processing loop")?; // Not sure if this is a good idea being fully ran 24/7 but IDRC
-
-        // drop(video_encoder);
 
         self_arc.lock().unwrap().connected = false;
 
         Ok(())
     }
 
-    async fn main_message_loop(self_arc: Arc<Mutex<Self>>, dc: Arc<dyn DataChannel>, mut done_rx: webrtc::runtime::Receiver<RTCPeerConnectionState>, encoder: Arc<Mutex<EncoderRegistry>>, video_packet_tx: UnboundedSender<Bytes>) -> anyhow::Result<()> {
-        let mut opt_uinput_dev = Self::create_uinput_if_possible().await.inspect_err(|e| eprintln!("Failed to create uinput virtual controller: {e:?}")).ok();
+    async fn main_message_loop(
+        self_arc: Arc<Mutex<Self>>, 
+        dc: Arc<dyn DataChannel>, 
+        mut done_rx: webrtc::runtime::Receiver<RTCPeerConnectionState>, 
+        encoder: Arc<Mutex<EncoderRegistry>>, 
+        video_packet_tx: UnboundedSender<Bytes>
+    ) -> anyhow::Result<()> {
+        let mut opt_uinput_dev = create_uinput_if_possible().await.inspect_err(|e| eprintln!("Failed to create uinput virtual controller: {e:?}")).ok();
         let mut selected_instance: Option<(u64, Arc<Mutex<Vec<InstanceInputEvt>>>, Option<EncoderReference>)> = None;
 
         loop {
-            // println!("Waiting on datachannel message!");
             let datachannel_poll_data = {
                 tokio::select! {
                     msg_type = done_rx.recv() => {
@@ -399,110 +382,17 @@ impl RemoteClient {
                     let msg_str = str::from_utf8(&msg.data).context("FAILED TO UTF8 DECODE")?;
                     let msg_parsed = serde_json::from_str(msg_str).with_context(|| format!("FAILED TO DECODE SERDE MESSAGE: {msg_str}"))?;
 
+                    let resp_opt = handle_remote_message(
+                        msg_parsed,
+
+                        &self_arc,
+                        &encoder,
+                        &video_packet_tx,
+                        
+                        &mut opt_uinput_dev,
+                        &mut selected_instance
+                    ).await.with_context(|| format!("Executing requested command: {msg_str}"))?;;
                     
-                    let resp_opt = match msg_parsed {
-                        RTCClientMessage::Status => {
-                            Self::handle_status_msg(self_arc.clone(), msg_parsed, opt_uinput_dev.is_some())
-                        },
-                        RTCClientMessage::Select { id: new_instance_id } => { // I hate this code, todo replace.
-                            if 
-                                let Some(arc_running_session_data) = &self_arc.lock().unwrap().con_inner.lock().unwrap().session_data
-                            {
-                                let mut running_session_data = arc_running_session_data.lock().unwrap();
-                                
-                                if 
-                                    let Some(ref selected_instance) = selected_instance &&
-                                    let Some(ref uinput_dev) = opt_uinput_dev 
-                                {                                    
-                                    selected_instance.1.lock().unwrap().push(
-                                        InstanceInputEvt::RemoveDev(
-                                            uinput_dev.1.to_string_lossy().trim_start_matches("/dev/input/").to_string()
-                                        )
-                                    );
-                                }
-
-                                if let Some(new_instance_id) = new_instance_id {
-                                    let instance = running_session_data.displays.iter_mut().find_map(|d| {
-                                        d.instances.iter_mut().find(|i| {
-                                            i.id.0 == new_instance_id
-                                        })
-                                    });
-
-                                    if 
-                                        let Some(instance) = instance &&
-                                        let Some(launched_instance) = &mut instance.launch_data
-                                    {
-
-                                        let new_encoder_ref = { // TODO make this not terrible
-                                            let tmp_encoder_clone = encoder.clone();
-                                            let tmp_video_packet_tx_clone = video_packet_tx.clone();
-                                            launched_instance.stream_view.as_ref().and_then(move |sv| {
-                                                tmp_encoder_clone.lock().unwrap().listen(sv.pipewire_node, Box::new(move |data: &[u8], _: i64, _: bool| {
-                                                    let _ = tmp_video_packet_tx_clone.send(Bytes::copy_from_slice(data));
-                                                })).inspect_err(|e| eprintln!("Failed to create encoder for view: {e:#?}")).ok()
-                                            })
-                                        };
-
-                                        selected_instance = Some((
-                                            new_instance_id, 
-                                            launched_instance.input_events.clone(), 
-                                            new_encoder_ref
-                                        ));
-                                        
-                                        if let Some(ref uinput_dev) = opt_uinput_dev {
-                                            launched_instance.input_events.lock().unwrap().push(
-                                                InstanceInputEvt::AddDev(
-                                                    uinput_dev.1.to_string_lossy().trim_start_matches("/dev/input/").to_string()
-                                                )
-                                            );
-                                        }
-                                        
-                                    } else {
-                                        eprintln!("Failed to setup remote device to user");
-                                        selected_instance = None;
-                                    }
-                                } else {
-                                    selected_instance = None;
-                                }
-                            }
-                            
-
-                            // TODO update the ffmpeg stream we are listening to too.
-
-                            Ok(None)
-                        },
-                        RTCClientMessage::RemoteInput { input_type, input_code, input_value } => { // Keyboard OR mouse button
-                            let constructed_event =
-                                evdev::InputEvent::new(
-                                    input_type,
-                                    input_code,
-                                    input_value
-                                );
-
-                            if
-                                let Some(ref mut virt_dev) = opt_uinput_dev &&
-                                ((
-                                    input_type == evdev::EventType::KEY.0 && 
-                                    PARTY_DECK_REMOTE_CONTROLLER_BUTTONS.contains(&KeyCode::new(input_code))
-                                ) || (
-                                    input_type == evdev::EventType::ABSOLUTE.0 && 
-                                    PARTY_DECK_REMOTE_CONTROLLER_AXIS.iter().any(
-                                        |a| a.0.0 == input_code
-                                    )
-                                ))
-                            {
-                                // Handle any valid controller events. We only support those we bound already.
-                                virt_dev.0.emit(&[constructed_event])?;
-                            } else if let Some(ref instance_data) = selected_instance {
-                                // Handle mouse and keyboard input or just drop it internally at this point. This lets the main system handle anything else.
-                                instance_data.1.lock().unwrap().push(InstanceInputEvt::InputEvt(constructed_event));
-                            }
-
-                            Ok(None)
-                        },
-                        // _ => {Ok(None)}
-                    }.with_context(|| format!("Executing requested command: {msg_str}"))?;
-
 
                     if let Some(resp) = resp_opt {
                         dc.send_text(&resp).await.context("Sening response")?;
@@ -515,129 +405,6 @@ impl RemoteClient {
                 _ => {},
             }
         }
-    }
-
-    fn handle_status_msg(self_arc: Arc<Mutex<Self>>, _msg_parsed: RTCClientMessage, has_controller_support: bool) -> anyhow::Result<Option<String>> {
-
-        
-        let session_data = { // Avoid locking for too long.
-            let client_self = self_arc.lock().unwrap();
-            let shared_self = client_self.con_inner.lock().unwrap();
-            shared_self.session_data.clone()
-        };
-
-        let message_to_send = match session_data {
-            Some(session_data) => {
-                // Lock contention hell. Please fix in the future // TODO
-                let mut session_data = session_data.lock().unwrap();
-                let encoded_instance = session_data.displays.iter_mut().flat_map(|d| {
-                    d.instances.iter_mut().map(|i| {
-                        ServerInstanceInfo {
-                            id: i.id.0,
-                            name: i.profname.clone(),
-                            color: i.color.to_hex(),
-                            alive: i.is_alive_or_starting(),
-                        }
-                        // i.launch_data.map(|ld| {
-                        //     ld.
-                        // })
-                    })
-                }).collect();
-
-                RTCServerMessage::StatusStarted { instances: encoded_instance, has_controller_support }
-            },
-            None => RTCServerMessage::StatusNotStarted
-        };
-
-        Ok(Some(serde_json::to_string(&message_to_send)?))
-    }
-
-    async fn create_uinput_if_possible() -> anyhow::Result<(evdev::uinput::VirtualDevice, PathBuf)> {
-        let mut dev_builder = evdev::uinput::VirtualDevice::builder().context("Cant open uinput")?
-            .name(&"Partydeck Virtual Remote Controller")
-            .input_id(InputId::new(BusType::BUS_USB, 12, 12, 1))
-            .with_keys(&evdev::AttributeSet::from_iter(PARTY_DECK_REMOTE_CONTROLLER_BUTTONS)).context("Invalid keys")?;
-
-        for axis in PARTY_DECK_REMOTE_CONTROLLER_AXIS {
-            dev_builder = dev_builder.with_absolute_axis(&evdev::UinputAbsSetup::new(axis.0, AbsInfo::new(0, axis.1, axis.2, 0, 0, 0))).context("Invalid Axis")?;
-        }
-
-        let mut dev = dev_builder.build().context("Failed to build")?;
-        tokio::time::sleep(Duration::from_millis(500)).await; // The kernel scares me. Just give it time to calm down.
-        let mut path_checker = dev.enumerate_dev_nodes_blocking().context("Failed to open device node")?;
-        let path_dev = path_checker.next().ok_or(anyhow::anyhow!("No path found"))?.context("No path found")?;
-
-        println!("New virtual device added for RTC: {path_dev:?}");
-        Ok((dev, path_dev))
-    }
+    }    
 }
-
-
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "type")]
-enum RTCClientMessage {
-    #[serde(rename = "status")]
-    Status,
-
-    #[serde(rename = "select")]
-    Select {id: Option<u64>},
-
-    #[serde(rename = "remote_input")]
-    RemoteInput {input_type: u16, input_code: u16, input_value: i32}
-}
-
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "type")]
-enum RTCServerMessage {
-    #[serde(rename = "status_not_started")]
-    StatusNotStarted,
-
-    #[serde(rename = "status_started")]
-    StatusStarted { instances: Vec<ServerInstanceInfo>, has_controller_support: bool },
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ServerInstanceInfo {
-    id: u64,
-    name: String,
-    color: String,
-    alive: bool
-}
-
-static PARTY_DECK_REMOTE_CONTROLLER_BUTTONS: [KeyCode; 17] = [ // Used as a bitmask, only append to work with new protos.
-    KeyCode::BTN_SOUTH, // A
-    KeyCode::BTN_EAST,  // B
-    KeyCode::BTN_WEST,  // X
-    KeyCode::BTN_NORTH, // Y
-
-    KeyCode::BTN_TL,     // LB
-    KeyCode::BTN_TR,     // RB
-
-    KeyCode::BTN_TL2, // Take a wild guess
-    KeyCode::BTN_TR2, // Take a wild guess
-
-    KeyCode::BTN_SELECT, // Back / View
-    KeyCode::BTN_START,  // Menu / Start
-
-    KeyCode::BTN_THUMBL, // Left stick click
-    KeyCode::BTN_THUMBR, // Right stick click
-    
-    KeyCode::BTN_DPAD_UP,
-    KeyCode::BTN_DPAD_DOWN,
-    KeyCode::BTN_DPAD_LEFT,
-    KeyCode::BTN_DPAD_RIGHT,
-
-    KeyCode::BTN_MODE   // Xbox button
-];
-
-static PARTY_DECK_REMOTE_CONTROLLER_AXIS: [(AbsoluteAxisCode, i32, i32); 4] = [
-    (AbsoluteAxisCode::ABS_X, -32768, 32767),
-    (AbsoluteAxisCode::ABS_Y, -32768, 32767),
-    (AbsoluteAxisCode::ABS_RX, -32768, 32767),
-    (AbsoluteAxisCode::ABS_RY, -32768, 32767),
-    // (AbsoluteAxisCode::ABS_Z, 0, 255), // Left trigger
-    // (AbsoluteAxisCode::ABS_RZ, 0, 255), // Right trigger
-];
 

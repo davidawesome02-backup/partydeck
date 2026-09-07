@@ -11,7 +11,7 @@ use super::toasts::Toasts;
 use crate::handler::{Handler, scan_handlers};
 use crate::launch::LaunchPlan;
 use crate::monitor::{Monitor, get_monitors_errorless};
-use crate::remote::shared;
+use crate::remote::websocket;
 use crate::session::{InstanceId, Session};
 use crate::video::egl::EglApi;
 use crate::video::pipewire::PipewireInstance;
@@ -38,7 +38,7 @@ pub struct AppState {
 
     pub input_state: input::InputState,
 
-    pub remote_con: shared::RemoteConnection,
+    pub remote_con: websocket::RemoteConnection,
 
     // pub encoder: encoder::EncoderRegistry
 }
@@ -100,8 +100,8 @@ impl AppState {
 
         let input_state = input::InputState::new().unwrap();
 
-        let remote_con = shared::RemoteConnection::new(Arc::new(Mutex::new(encoder))).unwrap();
-        remote_con.channel.send(shared::RemoteCommand::Connect).unwrap();
+        let remote_con = websocket::RemoteConnection::new(Arc::new(Mutex::new(encoder))).unwrap();
+        remote_con.channel.send(websocket::RemoteCommand::Connect).unwrap();
 
         Self {
             options,
