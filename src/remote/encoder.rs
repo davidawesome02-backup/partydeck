@@ -173,6 +173,7 @@ impl EncoderRegistry {
             }
         });
 
+        inner.keyframe_requested.swap(true, Ordering::Relaxed);
         inner.callbacks.lock().unwrap().insert(encoder_id, callback);
 
         Ok(EncoderReference {

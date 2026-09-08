@@ -1,9 +1,10 @@
+use eframe::egui::{self, ViewportId};
 use evdev::{AbsInfo, AbsoluteAxisCode, BusType, InputId, KeyCode};
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 
 use anyhow::Context;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::{sync::mpsc::UnboundedSender};
 
 use crate::{remote::{encoder::{EncoderReference, EncoderRegistry}, rtc::RemoteClient}, session::InstanceInputEvt};
 use bytes::{self, Bytes};
@@ -13,11 +14,12 @@ pub async fn handle_remote_message(
     msg_parsed: RTCClientMessage,
 
     self_arc: &Arc<Mutex<RemoteClient>>,
-    encoder: &Arc<Mutex<EncoderRegistry>>, 
+    encoder: &Arc<Mutex<EncoderRegistry>>,
     video_packet_tx: &UnboundedSender<Bytes>,
+    egui_ctx: &egui::Context,
 
-    opt_uinput_dev: &mut Option<(evdev::uinput::VirtualDevice, PathBuf)>,
-    selected_instance: &mut Option<(u64, Arc<Mutex<Vec<InstanceInputEvt>>>, Option<EncoderReference>)>
+    opt_uinput_dev: &mut Option<BindableVirtualDevice>,
+    selected_instance: &mut Option<(u64, Arc<Mutex<Vec<InstanceInputEvt>>>, Option<EncoderReference>, ViewportId)>
 ) -> anyhow::Result<Option<String>> {
     match msg_parsed {
         RTCClientMessage::Status => {
@@ -31,13 +33,9 @@ pub async fn handle_remote_message(
                 
                 if 
                     let &mut Some(ref selected_instance) = selected_instance &&
-                    let &mut Some(ref uinput_dev) = opt_uinput_dev 
+                    let &mut Some(ref mut uinput_dev) = opt_uinput_dev 
                 {                                    
-                    selected_instance.1.lock().unwrap().push(
-                        InstanceInputEvt::RemoveDev(
-                            uinput_dev.1.to_string_lossy().trim_start_matches("/dev/input/").to_string()
-                        )
-                    );
+                    uinput_dev.unbind();
                 }
 
                 if let Some(new_instance_id) = new_instance_id {
@@ -62,18 +60,20 @@ pub async fn handle_remote_message(
                             })
                         };
 
+                        if new_encoder_ref.is_some() {
+                            println!("New Encoder setup on instance!");
+                        }
+                        println!("Switched to instance {new_instance_id}");
+
                         *selected_instance = Some((
                             new_instance_id, 
                             launched_instance.input_events.clone(), 
-                            new_encoder_ref
+                            new_encoder_ref,
+                            launched_instance.viewport_id
                         ));
                         
-                        if let &mut Some(ref uinput_dev) = opt_uinput_dev {
-                            launched_instance.input_events.lock().unwrap().push(
-                                InstanceInputEvt::AddDev(
-                                    uinput_dev.1.to_string_lossy().trim_start_matches("/dev/input/").to_string()
-                                )
-                            );
+                        if let &mut Some(ref mut uinput_dev) = opt_uinput_dev {
+                            uinput_dev.bind(launched_instance.input_events.clone());
                         }
                         
                     } else {
@@ -97,24 +97,27 @@ pub async fn handle_remote_message(
                     input_code,
                     input_value
                 );
-
-            if
-                let &mut Some(ref mut virt_dev) = opt_uinput_dev &&
-                ((
-                    input_type == evdev::EventType::KEY.0 && 
-                    PARTY_DECK_REMOTE_CONTROLLER_BUTTONS.contains(&KeyCode::new(input_code))
-                ) || (
-                    input_type == evdev::EventType::ABSOLUTE.0 && 
-                    PARTY_DECK_REMOTE_CONTROLLER_AXIS.iter().any(
-                        |a| a.0.0 == input_code
-                    )
-                ))
-            {
-                // Handle any valid controller events. We only support those we bound already.
-                virt_dev.0.emit(&[constructed_event])?;
-            } else if let &mut Some(ref mut instance_data) = selected_instance {
-                // Handle mouse and keyboard input or just drop it internally at this point. This lets the main system handle anything else.
-                instance_data.1.lock().unwrap().push(InstanceInputEvt::InputEvt(constructed_event));
+            if let &mut Some(ref mut instance_data) = selected_instance {
+                if
+                    let &mut Some(ref mut virt_dev) = opt_uinput_dev &&
+                    ((
+                        input_type == evdev::EventType::KEY.0 && 
+                        PARTY_DECK_REMOTE_CONTROLLER_BUTTONS.contains(&KeyCode::new(input_code))
+                    ) || (
+                        input_type == evdev::EventType::ABSOLUTE.0 && 
+                        PARTY_DECK_REMOTE_CONTROLLER_AXIS.iter().any(
+                            |a| a.0.0 == input_code
+                        )
+                    ))
+                {
+                    // Handle any valid controller events. We only support those we bound already.
+                    virt_dev.dev.emit(&[constructed_event])?;
+                } else {
+                    // Handle mouse and keyboard input or just drop it internally at this point. This lets the main system handle anything else.
+                    instance_data.1.lock().unwrap().push(InstanceInputEvt::InputEvt(constructed_event));
+                    // instance_data.
+                    egui_ctx.request_repaint_once_for(instance_data.3);
+                }
             }
 
             Ok(None)
@@ -154,23 +157,58 @@ fn handle_status_msg(self_arc: Arc<Mutex<RemoteClient>>, _msg_parsed: RTCClientM
     Ok(Some(serde_json::to_string(&message_to_send)?))
 }
 
-pub async fn create_uinput_if_possible() -> anyhow::Result<(evdev::uinput::VirtualDevice, PathBuf)> {
-    let mut dev_builder = evdev::uinput::VirtualDevice::builder().context("Cant open uinput")?
-        .name(&"Partydeck Virtual Remote Controller")
-        .input_id(InputId::new(BusType::BUS_USB, 12, 12, 1))
-        .with_keys(&evdev::AttributeSet::from_iter(PARTY_DECK_REMOTE_CONTROLLER_BUTTONS)).context("Invalid keys")?;
 
-    for axis in PARTY_DECK_REMOTE_CONTROLLER_AXIS {
-        dev_builder = dev_builder.with_absolute_axis(&evdev::UinputAbsSetup::new(axis.0, AbsInfo::new(0, axis.1, axis.2, 0, 0, 0))).context("Invalid Axis")?;
+pub struct BindableVirtualDevice {
+    pub dev: evdev::uinput::VirtualDevice,
+    path: PathBuf,
+    last_bound_inputs: Option<Arc<Mutex<Vec<InstanceInputEvt>>>>
+}
+impl BindableVirtualDevice {
+    pub async fn new() -> anyhow::Result<Self> {
+        let mut dev_builder = evdev::uinput::VirtualDevice::builder().context("Cant open uinput")?
+            .name(&"Partydeck Virtual Remote Controller")
+            .input_id(InputId::new(BusType::BUS_USB, 12, 12, 1))
+            .with_keys(&evdev::AttributeSet::from_iter(PARTY_DECK_REMOTE_CONTROLLER_BUTTONS)).context("Invalid keys")?;
+
+        for axis in PARTY_DECK_REMOTE_CONTROLLER_AXIS {
+            dev_builder = dev_builder.with_absolute_axis(&evdev::UinputAbsSetup::new(axis.0, AbsInfo::new(0, axis.1, axis.2, 0, 0, 0))).context("Invalid Axis")?;
+        }
+
+        let mut dev = dev_builder.build().context("Failed to build")?;
+        tokio::time::sleep(Duration::from_millis(500)).await; // The kernel scares me. Just give it time to calm down.
+        let mut path_checker = dev.enumerate_dev_nodes_blocking().context("Failed to open device node")?;
+        let path_dev = path_checker.next().ok_or(anyhow::anyhow!("No path found"))?.context("No path found")?;
+
+        println!("New virtual device added for RTC: {path_dev:?}");
+
+        Ok(Self{ dev, path: path_dev, last_bound_inputs: None})
     }
 
-    let mut dev = dev_builder.build().context("Failed to build")?;
-    tokio::time::sleep(Duration::from_millis(500)).await; // The kernel scares me. Just give it time to calm down.
-    let mut path_checker = dev.enumerate_dev_nodes_blocking().context("Failed to open device node")?;
-    let path_dev = path_checker.next().ok_or(anyhow::anyhow!("No path found"))?.context("No path found")?;
+    pub fn bind(&mut self, inputs_obj: Arc<Mutex<Vec<InstanceInputEvt>>>) {
+        self.unbind();
+        inputs_obj.lock().unwrap().push(
+            InstanceInputEvt::AddDev(
+                self.path.to_string_lossy().trim_start_matches("/dev/input/").to_string()
+            )
+        );
+        self.last_bound_inputs = Some(inputs_obj);
+    }
 
-    println!("New virtual device added for RTC: {path_dev:?}");
-    Ok((dev, path_dev))
+    pub fn unbind(&mut self) {
+        if let Some(last_bound_inputs) = &self.last_bound_inputs {
+            last_bound_inputs.lock().unwrap().push(
+                InstanceInputEvt::RemoveDev(
+                    self.path.to_string_lossy().trim_start_matches("/dev/input/").to_string()
+                )
+            );
+        }
+        self.last_bound_inputs = None;
+    }
+}
+impl Drop for BindableVirtualDevice {
+    fn drop(&mut self) {
+        self.unbind();
+    }
 }
 
 

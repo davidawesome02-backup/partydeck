@@ -100,7 +100,7 @@ impl AppState {
 
         let input_state = input::InputState::new().unwrap();
 
-        let remote_con = websocket::RemoteConnection::new(Arc::new(Mutex::new(encoder))).unwrap();
+        let remote_con = websocket::RemoteConnection::new(Arc::new(Mutex::new(encoder)), ctx.clone()).unwrap();
         remote_con.channel.send(websocket::RemoteCommand::Connect).unwrap();
 
         Self {

@@ -1,5 +1,6 @@
 use std::{collections::HashMap, str::FromStr, sync::{Arc, Mutex}, thread::{self, JoinHandle}, time::Duration};
 
+use eframe::egui;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::{select, sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel}};
@@ -23,12 +24,12 @@ pub struct RemoteConnection {
     pub inner: Arc<Mutex<RemoteConnectionInner>>,
 }
 impl RemoteConnection {
-    pub fn new(encoder: Arc<Mutex<EncoderRegistry>>) -> Result<Self, std::io::Error> {
+    pub fn new(encoder: Arc<Mutex<EncoderRegistry>>, egui_ctx: egui::Context) -> Result<Self, std::io::Error> {
 
         let (send, rec) = unbounded_channel();
         
         let con_inner = Arc::new(Mutex::new(
-            RemoteConnectionInner{ session_data: None, code: None, connected: false, clients: HashMap::new(), encoder }
+            RemoteConnectionInner{ session_data: None, code: None, connected: false, clients: HashMap::new(), encoder, egui_ctx }
         ));
         let con_inner_clone = con_inner.clone();
         
@@ -55,6 +56,7 @@ pub struct RemoteConnectionInner {
     pub connected: bool,
     clients: HashMap<String, Arc<Mutex<RemoteClient>>>,
     encoder: Arc<Mutex<EncoderRegistry>>,
+    egui_ctx: egui::Context,
 }
 
 impl RemoteConnectionInner {
@@ -152,9 +154,10 @@ impl RemoteConnectionInner {
             WsMessage::Offer { offer, client_id } => {
                 let mut self_ = self_arc.lock().unwrap();
                 let encoder_clone = self_.encoder.clone();
+                let egui_ctx_clone = self_.egui_ctx.clone();
                 self_.clients.insert(
                     client_id.clone(),
-                    RemoteClient::new(offer, client_id, msg_resp, self_arc.clone(), encoder_clone)
+                    RemoteClient::new(offer, client_id, msg_resp, self_arc.clone(), encoder_clone, egui_ctx_clone)
                 );
             },
             WsMessage::ClientError { client_error, client_id } => todo!(),

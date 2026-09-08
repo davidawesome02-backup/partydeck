@@ -1,11 +1,12 @@
 use std::{sync::{Arc, Mutex, OnceLock}, time::Duration};
 
 use anyhow::Context;
+use eframe::egui::{self, ViewportId};
 use tokio::sync::mpsc::UnboundedSender;
 use webrtc::{data_channel::{DataChannel, DataChannelEvent}, media_stream::track_local::{TrackLocal, static_sample::TrackLocalStaticSample}, peer_connection::{MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceGatheringState, RTCIceServer, RTCPeerConnectionState, Registry, register_default_interceptors}, rtp_transceiver::RtpSender, runtime::{Runtime, Sender, default_runtime}};
 use rtc::{data_channel::RTCDataChannelInit, media::Sample, media_stream::MediaStreamTrack, peer_connection::configuration::media_engine::{MIME_TYPE_H264, MIME_TYPE_RTX}, rtp::extension::{HeaderExtension, playout_delay_extension::PlayoutDelayExtension}, rtp_transceiver::{PayloadType, SSRC, rtp_sender::{RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters, RTCRtpEncodingParameters, RTCRtpHeaderExtensionCapability, RtpCodecKind}}};
 
-use crate::{remote::{connection::{create_uinput_if_possible, handle_remote_message}, encoder::{EncoderReference, EncoderRegistry}, websocket::RemoteConnectionInner}, session::InstanceInputEvt};
+use crate::{remote::{connection::{BindableVirtualDevice, handle_remote_message}, encoder::{EncoderReference, EncoderRegistry}, websocket::RemoteConnectionInner}, session::InstanceInputEvt};
 use bytes::{self, Bytes};
 
 
@@ -121,7 +122,7 @@ async fn writer_task(
                     // Find H.264 codec that matches your encoder's actual profile
                     p.rtp_parameters.codecs.iter()
                         .find(|c| {
-                            c.rtp_codec.sdp_fmtp_line == H264_FMTP
+                            c.rtp_codec.mime_type == rtc::peer_connection::configuration::media_engine::MIME_TYPE_H264
                         })
                         .map(|c| c.payload_type)
                 });
@@ -262,19 +263,19 @@ pub struct RemoteClient {
     pub con_inner: Arc<Mutex<RemoteConnectionInner>>
 }
 impl RemoteClient {
-    pub fn new(offer: String, id: String, msg_resp: UnboundedSender<String>, con_inner: Arc<Mutex<RemoteConnectionInner>>, encoder: Arc<Mutex<EncoderRegistry>>) -> Arc<Mutex<Self>> {
+    pub fn new(offer: String, id: String, msg_resp: UnboundedSender<String>, con_inner: Arc<Mutex<RemoteConnectionInner>>, encoder: Arc<Mutex<EncoderRegistry>>, egui_ctx: egui::Context) -> Arc<Mutex<Self>> {
 
         let ret_self = Arc::new(Mutex::new(Self { connected: false, id: id.clone(), con_inner }));
         let self_arc = ret_self.clone();
         
         tokio::spawn(async move {
-            Self::inner(self_arc, offer, id, msg_resp, encoder).await.unwrap();
+            Self::inner(self_arc, offer, id, msg_resp, encoder, egui_ctx).await.unwrap();
         });
 
         ret_self
     }
 
-    async fn inner(self_arc: Arc<Mutex<Self>>, offer_sdp: String, ws_id: String, msg_resp: UnboundedSender<String>, encoder: Arc<Mutex<EncoderRegistry>>) -> anyhow::Result<()> {
+    async fn inner(self_arc: Arc<Mutex<Self>>, offer_sdp: String, ws_id: String, msg_resp: UnboundedSender<String>, encoder: Arc<Mutex<EncoderRegistry>>, egui_ctx: egui::Context) -> anyhow::Result<()> {
         let (done_tx, mut done_rx) = webrtc::runtime::channel::<RTCPeerConnectionState>(1);
         let (gather_complete_tx, mut gather_complete_rx) = webrtc::runtime::channel(1);
 
@@ -347,7 +348,8 @@ impl RemoteClient {
             data_channel, 
             done_rx, 
             encoder, 
-            video_packet_tx
+            video_packet_tx,
+            &egui_ctx
         ).await.context("Main message processing loop")?; // Not sure if this is a good idea being fully ran 24/7 but IDRC
 
 
@@ -361,10 +363,11 @@ impl RemoteClient {
         dc: Arc<dyn DataChannel>, 
         mut done_rx: webrtc::runtime::Receiver<RTCPeerConnectionState>, 
         encoder: Arc<Mutex<EncoderRegistry>>, 
-        video_packet_tx: UnboundedSender<Bytes>
+        video_packet_tx: UnboundedSender<Bytes>,
+        egui_ctx: &egui::Context
     ) -> anyhow::Result<()> {
-        let mut opt_uinput_dev = create_uinput_if_possible().await.inspect_err(|e| eprintln!("Failed to create uinput virtual controller: {e:?}")).ok();
-        let mut selected_instance: Option<(u64, Arc<Mutex<Vec<InstanceInputEvt>>>, Option<EncoderReference>)> = None;
+        let mut opt_uinput_dev = BindableVirtualDevice::new().await.inspect_err(|e| eprintln!("Failed to create uinput virtual controller: {e:?}")).ok();
+        let mut selected_instance: Option<(u64, Arc<Mutex<Vec<InstanceInputEvt>>>, Option<EncoderReference>, ViewportId)> = None;
 
         loop {
             let datachannel_poll_data = {
@@ -388,10 +391,11 @@ impl RemoteClient {
                         &self_arc,
                         &encoder,
                         &video_packet_tx,
+                        &egui_ctx,
                         
                         &mut opt_uinput_dev,
                         &mut selected_instance
-                    ).await.with_context(|| format!("Executing requested command: {msg_str}"))?;;
+                    ).await.with_context(|| format!("Executing requested command: {msg_str}"))?;
                     
 
                     if let Some(resp) = resp_opt {

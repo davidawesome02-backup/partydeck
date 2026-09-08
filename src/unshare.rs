@@ -326,11 +326,17 @@ fn inner_bind_device(device_path: &String) -> anyhow::Result<()> {
     let from_path =
         PathBuf::from("/tmp/PARTYDECK_HOST_DEV_INPUT_MOUNT").join(device_path);
     let to_path = PathBuf::from("/dev/input").join(device_path);
-    // println!("Bind request: {from_path:?} -> {to_path:?}");
+    println!("Bind request: {from_path:?} -> {to_path:?}");
 
     if !to_path.exists() {
         std::fs::File::create(&to_path).context("Failed to create device mount point")?;
     }
+
+    // Command::spawn(Command::new("ls").arg("/tmp/PARTYDECK_HOST_DEV_INPUT_MOUNT"));
+
+    // Prevents bugs if we try to bind the same path twice, the bind mount would fail if it was already bound.
+    // This avoids that by unbinding or maybe not, we dont care :D
+    let _ = umount2(&to_path, MntFlags::MNT_DETACH);
 
     mount(
         Some(&from_path),
@@ -344,7 +350,7 @@ fn inner_bind_device(device_path: &String) -> anyhow::Result<()> {
 }
 fn inner_unbind_device(device_path: &String) -> anyhow::Result<()> {
     let to_path = PathBuf::from("/dev/input").join(device_path);
-    // println!("Unbind request: {to_path:?}");
+    println!("Unbind request: {to_path:?}, {}", to_path.exists());
 
     if to_path.exists() {
         umount2(&to_path, MntFlags::MNT_DETACH).context(format!("Failed to unmount device {device_path}"))?;
