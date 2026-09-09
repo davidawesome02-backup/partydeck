@@ -200,7 +200,7 @@ pub struct PipewireStream {
 
 impl PipewireStream {
     fn new(
-        id: PipewireID,
+        pw_id_target: PipewireID,
         _mainloop: MainLoopRc,
         _context: ContextRc,
         core: CoreRc
@@ -211,12 +211,18 @@ impl PipewireStream {
             pw::properties::properties! {
                 *pw::keys::MEDIA_TYPE => "Video",
                 *pw::keys::MEDIA_CATEGORY => "Capture",
+
+                // Numeric fallback because this is all you currently have.
+                "node.target" => pw_id_target.to_string(),
+
+                "node.dont-fallback" => "true",
+                "node.dont-reconnect" => "true",
             },
         )?;
 
         let new_stream_metadata = Arc::new(RwLock::new(
             PipewireStream {
-                id,
+                id: pw_id_target,
                 streaming: false,
 
                 latest_frame: None,
@@ -235,12 +241,18 @@ impl PipewireStream {
             .add_local_listener_with_user_data(stream_metadata_clone)
             .state_changed(move |_stream, stream_metadata, _old, new| {
                 use pw::stream::StreamState;
+                // println!("STATE CHANGED! {new:?}");
                 
+
                 let mut write_pw_stream = stream_metadata.write().unwrap(); 
                 write_pw_stream.streaming = matches!(new, StreamState::Streaming);
+                if write_pw_stream.streaming {
+                    write_pw_stream.latest_frame = None;
+                }
             })
             .param_changed(move |stream: &pipewire::stream::Stream, stream_metadata, fmt_id, param| {
                 // TODO watch out, if this gets called after the stream is dropped, we may have been moved off our target ID.
+                // println!("PARAM CHANGED!");
                 let Some(param) = param else { return };
                 if fmt_id != spa::param::ParamType::Format.as_raw() {
                     return;
@@ -258,11 +270,18 @@ impl PipewireStream {
                 }
 
                 let mut write_pw_stream = stream_metadata.write().unwrap();
-                if write_pw_stream.id != id {return;} // Only connect to our ID, DONT FALLBACK
+                if write_pw_stream.id != pw_id_target {
+                    write_pw_stream.latest_frame = None;
+                    println!("Erased stream when it was tried to be moved");
+                    return;
+                } // Only connect to our ID, DONT FALLBACK
 
                 if write_pw_stream.spa_format_latest.parse(param).is_err() {
                     return;
                 }
+
+                // println!("PARAM CHANGED TO PASSING VALUE!! {} - {}, {:?}, {:?}, {:?}", write_pw_stream.id, pw_id_target, write_pw_stream.spa_format_latest, media_type, media_subtype);
+
 
                 // Reply with our buffer requirements, asking for DMA-BUF memory.
                 let buffers = build_buffers_param();
@@ -341,7 +360,7 @@ impl PipewireStream {
         let mut params = [pod];
         stream.connect(
             spa::utils::Direction::Input,
-            Some(id),
+            Some(pw_id_target),
             pw::stream::StreamFlags::AUTOCONNECT,
             &mut params,
         )?;
