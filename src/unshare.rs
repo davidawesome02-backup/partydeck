@@ -1,5 +1,5 @@
 use std::{
-    ffi::OsStr, fs::File, io::Write, mem::forget, os::{
+    ffi::OsStr, fs::File, io::Write, os::{
         fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd},
         unix::net::UnixStream,
     }, path::PathBuf, process::Command, time::Duration,
@@ -152,6 +152,7 @@ pub struct NamespaceSetup {
 
 }
 
+#[allow(unused)]
 pub struct RemoteNamespace {
     remote_socket: RpcSocket,
 
@@ -629,52 +630,6 @@ impl PidFD {
         self.last_exit_code = Some(pidfd_info.exit_code);
         Ok(pidfd_info.exit_code)
     }
-
-    // pub fn try_wait(&mut self) -> anyhow::Result<Option<i32>> {
-    //     self.wait_inner(libc::WEXITED | libc::WNOHANG)
-    // }
-    // pub fn wait(&mut self) -> anyhow::Result<Option<i32>> {
-    //     self.wait_inner(libc::WEXITED)
-    // }
-    // fn wait_inner(&mut self, options: i32) -> anyhow::Result<Option<i32>> {
-    //     // libc::WEXITED | libc::WNOHANG
-    //     if self.last_exit_code.is_some() {
-    //         return Ok(self.last_exit_code);
-    //     };
-
-    //     let mut siginfo: libc::siginfo_t = unsafe { core::mem::zeroed() };
-    //     let r = cvt_libc_err(unsafe {
-    //         libc::waitid(
-    //             libc::P_PIDFD,
-    //             self.fd.as_raw_fd() as u32,
-    //             &mut siginfo,
-    //             options,
-    //         )
-    //         .into()
-    //     });
-
-    //     match r {
-    //         Err(waitid_err) if waitid_err.raw_os_error() == Some(libc::ECHILD) => {
-    //             // already reaped
-    //             match self.recover_reaped_exit_code() {
-    //                 Ok(exit_status) => {
-    //                     self.last_exit_code = Some(exit_status);
-    //                     return Ok(self.last_exit_code);
-    //                 }
-    //                 Err(_) => return Err(anyhow::Error::from(waitid_err)),
-    //             }
-    //         }
-    //         Err(e) => return Err(anyhow::Error::from(e)),
-    //         Ok(_) => {}
-    //     }
-
-    //     if unsafe { siginfo.si_pid() } == 0 {
-    //         self.last_exit_code = None;
-    //     } else {
-    //         self.last_exit_code = Some(Self::from_waitid_siginfo(siginfo));
-    //     }
-    //     Ok(self.last_exit_code)
-    // }
 
     pub fn wait(&mut self) -> anyhow::Result<Option<i32>> {
         self.wait_inner(false)

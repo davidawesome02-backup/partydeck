@@ -1,14 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufRead, Read};
+use std::io::Read;
 use std::os::fd::{AsRawFd, OwnedFd};
-use std::process::{Child, Command};
+use std::process::Command;
 use std::sync::{Arc, RwLock, Mutex};
 
 use eframe::egui::{self, Color32};
 use evdev::InputEvent;
 
-use crate::handler::Handler;
 use crate::input::{DeviceRefrence, InputStateInner};
 use crate::layout::{Layout, WindowPosition};
 use crate::monitor::Monitor;

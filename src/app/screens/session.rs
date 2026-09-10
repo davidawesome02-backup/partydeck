@@ -96,7 +96,7 @@ impl Screen for SessionScreen {
     }
 }
 
-fn display_ui(ui: &mut egui::Ui, session_data: Arc<Mutex<Session>>, toasts: &Toasts, idx: usize) {
+fn display_ui(ui: &mut egui::Ui, session_data: Arc<Mutex<Session>>, _toasts: &Toasts, idx: usize) {
     let mut session_data = session_data.lock().unwrap();
     let display = &mut session_data.displays[idx];
     display.display_ui(ui);

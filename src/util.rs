@@ -5,7 +5,6 @@ use rfd::FileDialog;
 use std::error::Error;
 use std::fs::{self, File};
 use std::io;
-use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use zip::ZipWriter;

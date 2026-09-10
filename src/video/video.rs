@@ -14,7 +14,6 @@ use pipewire as pw;
 
 use super::egl::{EglApi, EglError, EglImage};
 
-use crate::video::pipewire::PipewireCommand::ConnectVid;
 use crate::video::pipewire::{DmaBufFrame, PipewireCommand, PipewireID, PipewireListener, PipewireStream};
 
 /// Errors that can occur while constructing a [`PipewireVideo`].
@@ -202,6 +201,7 @@ impl Drop for Renderer {
 
 pub struct PipewireVideo {
     renderer: Arc<Mutex<Renderer>>,
+    #[allow(unused)]
     sender: pw::channel::Sender<PipewireCommand>,
     pub pw_refrence: PipewireListener,
     streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<PipewireStream>>>>>,

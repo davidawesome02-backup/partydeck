@@ -32,7 +32,6 @@ pub async fn handle_remote_message(
                 let mut running_session_data = arc_running_session_data.lock().unwrap();
                 
                 if 
-                    let &mut Some(ref selected_instance) = selected_instance &&
                     let &mut Some(ref mut uinput_dev) = opt_uinput_dev 
                 {                                    
                     uinput_dev.unbind();

@@ -6,20 +6,20 @@ use serde::{Deserialize, Serialize};
 use tokio::{select, sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel}};
 use tokio_tungstenite::{self, tungstenite};
 
-use crate::{remote::{encoder::EncoderRegistry, rtc::RemoteClient}, session::Session, video::pipewire::PipewireID};
+use crate::{remote::{encoder::EncoderRegistry, rtc::RemoteClient}, session::Session};
 
-type ws_type = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type WsType = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-
+#[allow(unused)]
 pub enum RemoteCommand {
     Connect,
     Disconnect,
-    SetSessionData(Option<Arc<Mutex<Session>>>),
     Terminate,
 }
 
 pub struct RemoteConnection {
     pub channel: UnboundedSender<RemoteCommand>,
+    #[allow(unused)]
     thread: JoinHandle<()>,
     pub inner: Arc<Mutex<RemoteConnectionInner>>,
 }
@@ -61,7 +61,7 @@ pub struct RemoteConnectionInner {
 
 impl RemoteConnectionInner {
     pub async fn inner(self_arc: Arc<Mutex<Self>>, mut rec: UnboundedReceiver<RemoteCommand>) -> anyhow::Result<()> {
-        let mut ws: Option<ws_type> = None;
+        let mut ws: Option<WsType> = None;
         let (send_ws_send_request, mut rec_ws_send_request) = unbounded_channel();
         loop {
             let mut disconnect_ws = false;
@@ -91,10 +91,6 @@ impl RemoteConnectionInner {
                     },
                     Some(RemoteCommand::Disconnect) => {
                         disconnect_ws = true;
-                    },
-                    Some(RemoteCommand::SetSessionData(session_data)) => {
-                        let mut self_ = self_arc.lock().unwrap();
-                        self_.session_data = session_data;
                     },
                     Some(RemoteCommand::Terminate) => {
                         return Ok(());
@@ -160,7 +156,8 @@ impl RemoteConnectionInner {
                     RemoteClient::new(offer, client_id, msg_resp, self_arc.clone(), encoder_clone, egui_ctx_clone)
                 );
             },
-            WsMessage::ClientError { client_error, client_id } => todo!(),
+            
+            WsMessage::ClientError { client_error, client_id } => todo!("{client_error}, {client_id}"),
         }
 
         Ok(false)

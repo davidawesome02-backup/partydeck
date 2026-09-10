@@ -1,13 +1,13 @@
 use std::{
     collections::HashMap,
     ffi::{CString, c_void},
-    os::fd::{BorrowedFd, IntoRawFd, RawFd},
+    os::fd::RawFd,
     path::PathBuf,
     ptr,
     sync::{
-        Arc, Mutex, RwLock as StdRwLock,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc::{self, SyncSender, TrySendError},
+        mpsc,
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -18,18 +18,15 @@ use crate::video::pipewire::{
 };
 use anyhow::{Context as _, Result};
 use ffmpeg_next::{codec, dictionary, ffi, format::Pixel, frame, rational::Rational};
-use nix::unistd;
 use pipewire::channel::Sender;
 
 static ENCODER_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+// This FPS should be fake where the id 
 const TARGET_FPS: u64 = 60;
-const FRAME_DURATION: Duration =
-    Duration::from_nanos((1_000_000_000 + TARGET_FPS - 1) / TARGET_FPS);
 const RTP_CLOCK_RATE: i32 = 90_000;
 const PTS_STEP: i64 = RTP_CLOCK_RATE as i64 / TARGET_FPS as i64;
 
-// const DRM_FORMAT_XRGB8888: u32 = u32::from_be_bytes(*b"XR24");
 const DRM_FORMAT_XRGB8888: u32 = u32::from_le_bytes(*b"XR24");
 const DRM_FORMAT_MOD_LINEAR: u64 = 0;
 
@@ -41,48 +38,8 @@ fn chk(ret: i32, what: &'static str) -> Result<()> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum HwBackend {
-    #[default]
-    Vaapi,
-    Vulkan,
-}
-impl HwBackend {
-    fn hw_pix_fmt(self) -> Pixel {
-        match self {
-            Self::Vaapi => Pixel::VAAPI,
-            Self::Vulkan => Pixel::VULKAN,
-        }
-    }
-    fn pix_fmt_name(self) -> &'static str {
-        match self {
-            Self::Vaapi => "vaapi",
-            Self::Vulkan => "vulkan",
-        }
-    }
-    fn convert_filter(self) -> (&'static str, &'static str) {
-        match self {
-            Self::Vaapi => ("scale_vaapi", "format=nv12"),
-            Self::Vulkan => ("scale_vulkan", "format=nv12"),
-        }
-    }
-    fn device_type(self) -> ffi::AVHWDeviceType {
-        match self {
-            Self::Vaapi => ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI,
-            Self::Vulkan => ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_VULKAN,
-        }
-    }
-    fn encoder_name(self) -> &'static str {
-        match self {
-            Self::Vaapi => "h264_vaapi",
-            Self::Vulkan => "h264_vulkan",
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct EncoderOptions {
-    pub backend: HwBackend,
     pub device: Option<PathBuf>,
     pub bitrate_bps: u32,
 }
@@ -92,22 +49,14 @@ pub struct EncoderOptions {
 /// Arguments: (packet_data, pts_90khz, is_keyframe)
 pub type EncoderCallback = Box<dyn FnMut(&[u8], i64, bool) + Send + Sync + 'static>;
 
-/// Frame data passed from PipeWire callback to encoder thread.
-/// Just a notification - encoder thread reads latest frame from stream state.
-type FrameSignal = ();
-
 struct EncoderInner {
     callbacks: Arc<Mutex<HashMap<u64, EncoderCallback>>>,
-    /// Single-slot channel: only a notification that a new frame is available.
-    /// Encoder thread reads latest frame directly from PipeWire stream state.
-    latest_frame_tx: SyncSender<FrameSignal>,
     keyframe_requested: Arc<AtomicBool>,
     _pw_listener: PipewireListener,
     _encoder_thread: JoinHandle<()>,
 }
 
 
-use std::sync::RwLock;
 use crate::video::pipewire::PipewireCommand;
 
 pub struct EncoderRegistry {
@@ -136,7 +85,7 @@ impl EncoderRegistry {
 
         let mut map = self.encoders.lock().unwrap();
         let inner = map.entry(pw_id).or_insert_with(|| {
-            let (latest_frame_tx, latest_frame_rx) = mpsc::sync_channel::<FrameSignal>(1);
+            let (latest_frame_tx, latest_frame_rx) = mpsc::sync_channel::<()>(1);
             let callbacks: Arc<Mutex<HashMap<u64, EncoderCallback>>> =
                 Arc::new(Mutex::new(HashMap::new()));
             let keyframe_requested = Arc::new(AtomicBool::new(false));
@@ -166,7 +115,6 @@ impl EncoderRegistry {
 
             EncoderInner {
                 callbacks,
-                latest_frame_tx,
                 keyframe_requested,
                 _pw_listener: pw_listener,
                 _encoder_thread: encoder_thread,
@@ -205,20 +153,24 @@ impl Drop for EncoderReference {
 /// Encoder thread: receives frame notifications, reads latest frame from stream, encodes to H.264.
 /// Runs on a dedicated thread to avoid blocking PipeWire or WebRTC.
 fn encoder_thread_inner(
-    streams: Arc<StdRwLock<HashMap<PipewireID, Arc<StdRwLock<PipewireStream>>>>>,
+    streams: Arc<RwLock<HashMap<PipewireID, Arc<RwLock<PipewireStream>>>>>,
     pw_id: PipewireID,
-    frame_rx: mpsc::Receiver<FrameSignal>,
+    frame_rx: mpsc::Receiver<()>,
     callbacks: Arc<Mutex<HashMap<u64, EncoderCallback>>>,
     keyframe_requested: Arc<AtomicBool>,
     mut opts: EncoderOptions,
 ) -> Result<()> {
-    opts.bitrate_bps = 4_000_000;
+    if opts.bitrate_bps == 0 {
+        opts.bitrate_bps = 2_000_000;
+    }
     let mut session: Option<HwEncodeSession> = None;
+    
+    // Just only log errors every 10s
     let mut last_err = std::time::Instant::now() - Duration::from_secs(10);
 
     while frame_rx.recv().is_ok() {
-        // println!("A");
         // Read latest frame from PipeWire stream state
+        // I just assume dmabuf is still valid if we get it here.
         let frame = {
             let map = streams.read().ok().context("Streams read failed")?;
             let stream = map.get(&pw_id).context("Pw map not exists")?.read().ok().context("Failed to read")?;
@@ -275,16 +227,8 @@ fn encoder_thread_inner(
     Ok(())
 }
 
-// ============================================================================
-// FFmpeg hardware encode session
-// ============================================================================
-// Zero-copy GPU encoding pipeline:
-// dmabuf fd -> AVFrame(DRM_PRIME) -> av_hwframe_map (VA surface) ->
-// scale_vaapi (BGR0->NV12 on GPU) -> h264_vaapi -> Annex-B packets
-// All processing stays on GPU (VA-API), no CPU copies.
-// ============================================================================
 
-// RAII wrapper for AVBufferRef - manages reference counting
+// RAII wrapper for AVBufferRef, manages reference counting
 struct HwBufferRef(*mut ffi::AVBufferRef);
 impl HwBufferRef {
     fn get(&self) -> *mut ffi::AVBufferRef {
@@ -307,7 +251,7 @@ impl Drop for HwBufferRef {
     }
 }
 
-// RAII wrapper for AVFilterGraph - frees all filters on drop
+// RAII wrapper for AVFilterGraph, frees all filters on drop
 struct FilterGraph(*mut ffi::AVFilterGraph);
 impl Drop for FilterGraph {
     fn drop(&mut self) {
@@ -319,9 +263,9 @@ impl Drop for FilterGraph {
 
 /// Complete hardware encode session for one resolution.
 /// Owns: VA device, frames context, filter graph, H.264 encoder.
-/// All FFmpeg state is confined to the encoder thread (Send via unsafe impl).
+/// All FFmpeg state is confined to the encoder thread.
+#[allow(unused)]
 struct HwEncodeSession {
-    backend: HwBackend,
     width: u32,
     height: u32,
     offset: u32,
@@ -334,252 +278,241 @@ struct HwEncodeSession {
     frames_ref: HwBufferRef,
     device_ref: HwBufferRef,
 }
-unsafe impl Send for HwEncodeSession {}
 
 impl HwEncodeSession {
     /// Creates a new encode session for the given frame dimensions.
     /// Sets up: VA device -> frames context -> filter graph -> encoder.
     fn new(
     opts: &EncoderOptions,
-    width: u32,
-    height: u32,
-    offset: u32,
-    stride: i32,
-) -> Result<Self> {
-    let backend = opts.backend;
+        width: u32,
+        height: u32,
+        offset: u32,
+        stride: i32,
+    ) -> Result<Self> {
+        let device_cstr = opts
+            .device
+            .as_ref()
+            .map(|p| CString::new(p.as_os_str().as_encoded_bytes()))
+            .transpose()?;
 
-    let device_cstr = opts
-        .device
-        .as_ref()
-        .map(|p| CString::new(p.as_os_str().as_encoded_bytes()))
-        .transpose()?;
+        // --- 1. Open hardware device ---
+        let mut raw_dev: *mut ffi::AVBufferRef = ptr::null_mut();
 
-    // --- 1. Open hardware device ---
-    let mut raw_dev: *mut ffi::AVBufferRef = ptr::null_mut();
+        chk(
+            unsafe {
+                ffi::av_hwdevice_ctx_create(
+                    &mut raw_dev,
+                    ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI,
+                    device_cstr
+                        .as_ref()
+                        .map(|s| s.as_ptr())
+                        .unwrap_or(ptr::null()),
+                    ptr::null_mut(),
+                    0,
+                )
+            },
+            "hw device",
+        )?;
 
-    chk(
+        let device_ref = HwBufferRef(raw_dev);
+
+        // --- 2. Create frames context for imported dmabuf surfaces ---
+        let raw_frames = unsafe { ffi::av_hwframe_ctx_alloc(device_ref.get()) };
+        let frames_ref = HwBufferRef(raw_frames);
+
+        if frames_ref.0.is_null() {
+            return Err(anyhow::anyhow!("av_hwframe_ctx_alloc failed"));
+        }
+
         unsafe {
-            ffi::av_hwdevice_ctx_create(
-                &mut raw_dev,
-                backend.device_type(),
-                device_cstr
-                    .as_ref()
-                    .map(|s| s.as_ptr())
-                    .unwrap_or(ptr::null()),
-                ptr::null_mut(),
-                0,
-            )
-        },
-        "hw device",
-    )?;
+            let frames_ctx = (*raw_frames).data as *mut ffi::AVHWFramesContext;
 
-    let device_ref = HwBufferRef(raw_dev);
+            (*frames_ctx).format = Pixel::VAAPI.into();
 
-    // --- 2. Create frames context for imported dmabuf surfaces ---
-    let raw_frames = unsafe { ffi::av_hwframe_ctx_alloc(device_ref.get()) };
-    let frames_ref = HwBufferRef(raw_frames);
+            (*frames_ctx).sw_format = Pixel::BGRZ.into();
 
-    if frames_ref.0.is_null() {
-        return Err(anyhow::anyhow!("av_hwframe_ctx_alloc failed"));
-    }
+            (*frames_ctx).width = width as i32;
+            (*frames_ctx).height = height as i32;
 
-    unsafe {
-        let frames_ctx = (*raw_frames).data as *mut ffi::AVHWFramesContext;
+            // Surfaces are imported on demand from dmabufs.
+            (*frames_ctx).initial_pool_size = 0;
 
-        (*frames_ctx).format = backend.hw_pix_fmt().into();
-
-        // This must match the format described by the DRM PRIME frame.
-        // (*frames_ctx).sw_format = Pixel::BGRZ.into();
-        (*frames_ctx).sw_format = Pixel::BGRZ.into();
-
-        (*frames_ctx).width = width as i32;
-        (*frames_ctx).height = height as i32;
-
-        // Surfaces are imported on demand from dmabufs.
-        (*frames_ctx).initial_pool_size = 0;
-
-        chk(
-            ffi::av_hwframe_ctx_init(frames_ref.get()),
-            "frames ctx init",
-        )?;
-    }
-
-    // --- 3. Build filter graph ---
-    let graph = FilterGraph(unsafe { ffi::avfilter_graph_alloc() });
-
-    if graph.0.is_null() {
-        return Err(anyhow::anyhow!("avfilter_graph_alloc failed"));
-    }
-
-    // Keep the hardware pixel format here. The source filter is initialized
-    // only after hw_frames_ctx has been attached below.
-    let src_args = CString::new(format!(
-        "video_size={width}x{height}:pix_fmt={}:time_base=1/{RTP_CLOCK_RATE}:pixel_aspect=1/1",
-        backend.pix_fmt_name()
-    ))?;
-
-    let mut src_ctx = ptr::null_mut();
-    let mut sink_ctx = ptr::null_mut();
-    let mut convert_ctx = ptr::null_mut();
-
-    unsafe {
-        let buffersrc =
-            ffi::avfilter_get_by_name(b"buffer\0".as_ptr() as *const i8);
-
-        let buffersink =
-            ffi::avfilter_get_by_name(b"buffersink\0".as_ptr() as *const i8);
-
-        let (conv_name, conv_args) = backend.convert_filter();
-
-        let converter_name = CString::new(conv_name)?;
-        let converter =
-            ffi::avfilter_get_by_name(converter_name.as_ptr());
-
-        if buffersrc.is_null() || buffersink.is_null() || converter.is_null() {
-            return Err(anyhow::anyhow!(
-                "required ffmpeg filters missing"
-            ));
+            chk(
+                ffi::av_hwframe_ctx_init(frames_ref.get()),
+                "frames ctx init",
+            )?;
         }
 
-        // Important:
-        //
-        // Do not use avfilter_graph_create_filter() for the buffer source.
-        // That function initializes the source immediately, before its
-        // hw_frames_ctx can be installed.
-        src_ctx = ffi::avfilter_graph_alloc_filter(
-            graph.0,
-            buffersrc,
-            b"in\0".as_ptr() as *const i8,
-        );
+        // --- 3. Build filter graph ---
+        let graph = FilterGraph(unsafe { ffi::avfilter_graph_alloc() });
 
-        if src_ctx.is_null() {
-            return Err(anyhow::anyhow!(
-                "avfilter_graph_alloc_filter(buffer) failed"
-            ));
+        if graph.0.is_null() {
+            return Err(anyhow::anyhow!("avfilter_graph_alloc failed"));
         }
 
-        // Attach the hardware frames context before initializing the source.
-        let params = ffi::av_buffersrc_parameters_alloc();
+        // Keep the hardware pixel format here. The source filter is initialized
+        // only after hw_frames_ctx has been attached below.
+        let src_args = CString::new(format!(
+            "video_size={width}x{height}:pix_fmt=vaapi:time_base=1/{RTP_CLOCK_RATE}:pixel_aspect=1/1"
+        ))?;
 
-        if params.is_null() {
-            return Err(anyhow::anyhow!(
-                "av_buffersrc_parameters_alloc failed"
-            ));
-        }
+        #[allow(unused)]
+        let mut src_ctx = ptr::null_mut();
+        let mut sink_ctx = ptr::null_mut();
+        let mut convert_ctx = ptr::null_mut();
 
-        let mut frames_for_src = frames_ref.ref_clone()?;
+        unsafe {
+            let buffersrc =
+                ffi::avfilter_get_by_name(b"buffer\0".as_ptr() as *const i8);
 
-        (*params).format =
-            ffi::AVPixelFormat::from(backend.hw_pix_fmt()) as i32;
+            let buffersink =
+                ffi::avfilter_get_by_name(b"buffersink\0".as_ptr() as *const i8);
 
-        (*params).width = width as i32;
-        (*params).height = height as i32;
+            let (conv_name, conv_args) = ("scale_vaapi", "format=nv12");
 
-        (*params).time_base = ffi::AVRational {
-            num: 1,
-            den: RTP_CLOCK_RATE,
-        };
+            let converter_name = CString::new(conv_name)?;
+            let converter =
+                ffi::avfilter_get_by_name(converter_name.as_ptr());
 
-        (*params).sample_aspect_ratio = ffi::AVRational {
-            num: 1,
-            den: 1,
-        };
+            if buffersrc.is_null() || buffersink.is_null() || converter.is_null() {
+                return Err(anyhow::anyhow!(
+                    "required ffmpeg filters missing"
+                ));
+            }
 
-        (*params).hw_frames_ctx = frames_for_src;
-
-        let ret = ffi::av_buffersrc_parameters_set(src_ctx, params);
-
-        // av_buffersrc_parameters_set() takes its own reference.
-        ffi::av_buffer_unref(&mut frames_for_src);
-
-        // ffi::av_freep((params as *mut _ as *mut c_void));
-
-        chk(ret, "buffersrc params")?;
-
-        // Now initialize the source. At this point the source already has
-        // hw_frames_ctx, so pix_fmt=vaapi is valid.
-        chk(
-            ffi::avfilter_init_str(src_ctx, src_args.as_ptr()),
-            "buffer src",
-        )?;
-
-        // Conversion: scale_vaapi, for example:
-        // ("scale_vaapi", "format=nv12")
-        let convert_args = CString::new(conv_args)?;
-
-        chk(
-            ffi::avfilter_graph_create_filter(
-                &mut convert_ctx,
-                converter,
-                b"convert\0".as_ptr() as *const i8,
-                convert_args.as_ptr(),
-                ptr::null_mut(),
+            
+            src_ctx = ffi::avfilter_graph_alloc_filter(
                 graph.0,
-            ),
-            "converter",
-        )?;
+                buffersrc,
+                b"in\0".as_ptr() as *const i8,
+            );
 
-        // Output buffer sink.
-        chk(
-            ffi::avfilter_graph_create_filter(
-                &mut sink_ctx,
-                buffersink,
-                b"out\0".as_ptr() as *const i8,
-                ptr::null(),
-                ptr::null_mut(),
-                graph.0,
-            ),
-            "buffer sink",
-        )?;
+            if src_ctx.is_null() {
+                return Err(anyhow::anyhow!(
+                    "avfilter_graph_alloc_filter(buffer) failed"
+                ));
+            }
 
-        // Link:
-        //
-        // buffer -> scale_vaapi -> buffersink
-        let mut ret = ffi::avfilter_link(src_ctx, 0, convert_ctx, 0);
+            
+            let params = ffi::av_buffersrc_parameters_alloc();
 
-        if ret >= 0 {
-            ret = ffi::avfilter_link(convert_ctx, 0, sink_ctx, 0);
+            if params.is_null() {
+                return Err(anyhow::anyhow!(
+                    "av_buffersrc_parameters_alloc failed"
+                ));
+            }
+
+            let mut frames_for_src = frames_ref.ref_clone()?;
+
+            (*params).format =
+                ffi::AVPixelFormat::from(Pixel::VAAPI) as i32;
+
+            (*params).width = width as i32;
+            (*params).height = height as i32;
+
+            (*params).time_base = ffi::AVRational {
+                num: 1,
+                den: RTP_CLOCK_RATE,
+            };
+
+            (*params).sample_aspect_ratio = ffi::AVRational {
+                num: 1,
+                den: 1,
+            };
+
+            (*params).hw_frames_ctx = frames_for_src;
+
+            let ret = ffi::av_buffersrc_parameters_set(src_ctx, params);
+
+            ffi::av_buffer_unref(&mut frames_for_src);
+
+            // TODO add this back, I just removed it because I was getting errors. Because this is only called once
+            // Its a small memory leak.
+            // ffi::av_freep((params as *mut _ as *mut c_void));
+
+            chk(ret, "buffersrc params")?;
+
+            // Now initialize the source. At this point the source already has
+            // hw_frames_ctx, so pix_fmt=vaapi is valid.
+            chk(
+                ffi::avfilter_init_str(src_ctx, src_args.as_ptr()),
+                "buffer src",
+            )?;
+
+            
+            let convert_args = CString::new(conv_args)?;
+
+            chk(
+                ffi::avfilter_graph_create_filter(
+                    &mut convert_ctx,
+                    converter,
+                    b"convert\0".as_ptr() as *const i8,
+                    convert_args.as_ptr(),
+                    ptr::null_mut(),
+                    graph.0,
+                ),
+                "converter",
+            )?;
+
+            // Output buffer sink.
+            chk(
+                ffi::avfilter_graph_create_filter(
+                    &mut sink_ctx,
+                    buffersink,
+                    b"out\0".as_ptr() as *const i8,
+                    ptr::null(),
+                    ptr::null_mut(),
+                    graph.0,
+                ),
+                "buffer sink",
+            )?;
+
+            // Link:
+            //
+            // buffer -> scale_vaapi -> buffersink
+            let mut ret = ffi::avfilter_link(src_ctx, 0, convert_ctx, 0);
+
+            if ret >= 0 {
+                ret = ffi::avfilter_link(convert_ctx, 0, sink_ctx, 0);
+            }
+
+            chk(ret, "link filters")?;
+
+            chk(
+                ffi::avfilter_graph_config(graph.0, ptr::null_mut()),
+                "config graph",
+            )?;
         }
 
-        chk(ret, "link filters")?;
+        // --- 4. Open H.264 hardware encoder ---
+        let encoder_frames_ref =
+        create_encoder_frames_ctx(&device_ref, width, height)?;
 
-        chk(
-            ffi::avfilter_graph_config(graph.0, ptr::null_mut()),
-            "config graph",
+        let encoder = open_encoder(
+            width,
+            height,
+            opts,
+            &encoder_frames_ref,
         )?;
+
+
+        Ok(Self {
+            width,
+            height,
+            offset,
+            stride,
+            next_pts: 0,
+            encoder,
+            graph,
+            src_ctx,
+            sink_ctx,
+            frames_ref,
+            device_ref,
+        })
     }
 
-    // --- 4. Open H.264 hardware encoder ---
-    let encoder_frames_ref =
-    create_encoder_frames_ctx(&device_ref, backend, width, height)?;
 
-let encoder = open_encoder(
-    backend,
-    width,
-    height,
-    opts,
-    &encoder_frames_ref,
-)?;
-
-
-    Ok(Self {
-        backend,
-        width,
-        height,
-        offset,
-        stride,
-        next_pts: 0,
-        encoder,
-        graph,
-        src_ctx,
-        sink_ctx,
-        frames_ref,
-        device_ref,
-    })
-}
-
-
-    /// Encodes one captured dmabuf frame to H.264 Annex-B packets.
+    /// Encodes one captured dmabuf frame to H.264 RAW packets.
     /// Pipeline: dmabuf fd -> DRM_PRIME frame -> hwframe_map (VA surface) ->
     /// filter graph (scale_vaapi) -> h264_vaapi encoder -> packets.
     fn encode(&mut self, frame: DmaBufFrame, force_idr: bool) -> Result<Vec<(Vec<u8>, i64, bool)>> {
@@ -594,7 +527,7 @@ let encoder = open_encoder(
         }
 
         unsafe {
-            (*dst).format = ffi::AVPixelFormat::from(self.backend.hw_pix_fmt()) as i32;
+            (*dst).format = ffi::AVPixelFormat::from(Pixel::VAAPI) as i32;
             (*dst).width = self.width as i32;
             (*dst).height = self.height as i32;
             match self.frames_ref.ref_clone() {
@@ -605,19 +538,22 @@ let encoder = open_encoder(
                     return Err(e);
                 }
             }
-            // Maps the dmabuf (src) to a VA surface (dst) - no copy, just aliasing
+
+            // Maps the dmabuf (src) to a VA surface (dst)
             let ret = ffi::av_hwframe_map(dst, src, ffi::AV_HWFRAME_MAP_READ as i32);
             if ret < 0 {
                 ffi::av_frame_free(&mut dst);
                 ffi::av_frame_free(&mut src);
                 return Err(ffmpeg_next::Error::from(ret)).context("av_hwframe_map failed");
             }
+
             // Push VA surface into filter graph; KEEP_REF lets graph hold it while we drop ours
             let ret = ffi::av_buffersrc_add_frame_flags(
                 self.src_ctx,
                 dst,
                 ffi::AV_BUFFERSRC_FLAG_KEEP_REF as i32,
             );
+
             ffi::av_frame_free(&mut dst);
             ffi::av_frame_free(&mut src);
             if ret < 0 {
@@ -632,6 +568,7 @@ let encoder = open_encoder(
             if converted.is_null() {
                 return Err(anyhow::anyhow!("av_frame_alloc failed"));
             }
+
             // Pull NV12 frame from buffersink (output of scale_vaapi)
             let ret = unsafe { ffi::av_buffersink_get_frame(self.sink_ctx, converted) };
             if ret == -(nix::errno::Errno::EAGAIN as i32) {
@@ -656,6 +593,9 @@ let encoder = open_encoder(
             // Send to encoder and drain all packets for this frame
             let converted_frame = unsafe { frame::Video::wrap(converted) };
             self.encoder.send_frame(&converted_frame)?;
+
+            // TODO not block, allow multiple frames in flight, fine for now
+            // but limits max encoder speed on certain platforms - see https://www.youtube.com/watch?v=R3cpt9a8Cgc
 
             loop {
                 let mut packet = codec::packet::Packet::empty();
@@ -682,6 +622,7 @@ let encoder = open_encoder(
     /// The fd and descriptor are freed by FFmpeg when the last buffer ref drops.
     unsafe fn build_drm_frame(&self, frame: &DmaBufFrame) -> Result<*mut ffi::AVFrame> {
         // Holder owns the dmabuf fd and descriptor; freed in release callback
+        #[allow(unused)]
         struct Holder {
             fd: RawFd,
             desc: Box<ffi::AVDRMFrameDescriptor>,
@@ -762,7 +703,6 @@ let encoder = open_encoder(
 }
 
 fn open_encoder(
-    backend: HwBackend,
     width: u32,
     height: u32,
     opts: &EncoderOptions,
@@ -774,11 +714,10 @@ fn open_encoder(
         ));
     }
 
-    let codec = codec::encoder::find_by_name(backend.encoder_name())
+    let codec = codec::encoder::find_by_name("h264_vaapi")
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "encoder {} not available",
-                backend.encoder_name()
+                "encoder h264_vaapi not available"
             )
         })?;
 
@@ -788,10 +727,11 @@ fn open_encoder(
 
     ctx.set_width(width);
     ctx.set_height(height);
-    ctx.set_format(backend.hw_pix_fmt());
+    ctx.set_format(Pixel::VAAPI);
     ctx.set_time_base(Rational(1, RTP_CLOCK_RATE));
     ctx.set_max_b_frames(0);
-    ctx.set_gop(1 << 20);
+    // ctx.set_gop(1 << 20);
+    ctx.set_gop(400);
 
     // Set this through the public ffmpeg-next API.
     // The value is bits per second.
@@ -816,13 +756,7 @@ fn open_encoder(
     dict.set("async_depth", "1");
     dict.set("profile", "constrained_baseline");
 
-    if backend == HwBackend::Vaapi {
-        dict.set("compression_level", "0");
-    }
-
-    if backend == HwBackend::Vulkan {
-        dict.set("strict", "experimental");
-    }
+    dict.set("compression_level", "0");
 
     dict.set("flags", "+global_header");
     dict.set("repeat_pps", "1");
@@ -835,7 +769,6 @@ fn open_encoder(
 
 fn create_encoder_frames_ctx(
     device_ref: &HwBufferRef,
-    backend: HwBackend,
     width: u32,
     height: u32,
 ) -> Result<HwBufferRef> {
@@ -855,7 +788,7 @@ fn create_encoder_frames_ctx(
         let frames_ctx =
             (*raw_frames).data as *mut ffi::AVHWFramesContext;
 
-        (*frames_ctx).format = backend.hw_pix_fmt().into();
+        (*frames_ctx).format = Pixel::VAAPI.into();
 
         // The filter graph produces NV12 for h264_vaapi.
         (*frames_ctx).sw_format = Pixel::NV12.into();

@@ -48,13 +48,10 @@ impl PeerConnectionEventHandler for TestHandler {
 
  
 const RTP_CLOCK_RATE: i32 = 90_000;
-const TARGET_FPS: u64 = 60;
-const FRAME_DURATION: Duration = Duration::from_nanos((1_000_000_000 + TARGET_FPS - 1) / TARGET_FPS);
 
 /// Signaled codec: constrained-baseline, packetization-mode 1. Matches the encoder's
 /// constrained_baseline profile so every browser can decode it.
 const H264_FMTP: &str = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f";
-// const H264_FMTP: &str = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e1f";
 
 /// A sending H.264 track bound to the peer connection, plus its SSRC/sender handles.
 pub struct ClientVideoTrack {
@@ -259,6 +256,7 @@ async fn create_peer_connection(runtime: Arc<dyn Runtime>, handler: Arc<TestHand
 
 pub struct RemoteClient {
     connected: bool,
+    #[allow(unused)]
     id: String,
     pub con_inner: Arc<Mutex<RemoteConnectionInner>>
 }

@@ -1,14 +1,11 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use eframe::egui::{self, Color32, RichText, Ui, ViewportId};
+use eframe::egui::{self, Color32, RichText, Ui};
 
 use crate::app::config::save_cfg;
 use crate::app::screens::{Panels, Route, Screen};
-use crate::app::events::spawn_launch_worker;
 use crate::app::state::AppState;
 use crate::input::{DeviceRefrence, DeviceType};
-use crate::launch::LaunchPlan;
 use crate::layout::LayoutKind;
 use crate::profiles::{next_temp_name, scan_profiles};
 use crate::session::{Display, InstanceAction, InstanceId};

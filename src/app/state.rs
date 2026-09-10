@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use eframe::egui;
@@ -12,7 +11,7 @@ use crate::handler::{Handler, scan_handlers};
 use crate::launch::LaunchPlan;
 use crate::monitor::{Monitor, get_monitors_errorless};
 use crate::remote::websocket;
-use crate::session::{InstanceId, Session};
+use crate::session::{Session};
 use crate::video::egl::EglApi;
 use crate::video::pipewire::PipewireInstance;
 use crate::input;

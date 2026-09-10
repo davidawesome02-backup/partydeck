@@ -14,14 +14,12 @@ use profiles::ProfilesScreen;
 use session::SessionScreen;
 use settings::SettingsScreen;
 
-use std::sync::Arc;
 
 use eframe::egui;
 
 use super::state::AppState;
 use crate::handler::Handler;
 use crate::input::PadButton;
-use crate::launch::LaunchPlan;
 use crate::session::Session;
 
 pub enum Route {

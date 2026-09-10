@@ -7,14 +7,11 @@
 //! input back into the instance.
 
 use std::collections::{HashMap, HashSet};
-use std::io::BufRead;
-use std::os::fd::{AsFd, OwnedFd};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
 use eframe::egui::{self, Pos2, Rect, Vec2};
 use evdev::{InputEvent, RelativeAxisCode};
-use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use pipewire as pw;
 use wayland_client::protocol::wl_registry;
 use wayland_client::{Connection, Dispatch, Proxy};
@@ -324,7 +321,7 @@ impl InstanceStreamView {
                     _ => {}
                 }
             },
-            evdev::EventSummary::AbsoluteAxis(absolute_axis_event, absolute_axis_code, _) => todo!(),
+            evdev::EventSummary::AbsoluteAxis(_absolute_axis_event, _absolute_axis_code, _) => todo!(),
             _ => {}
         }
 
