@@ -91,15 +91,17 @@ impl AppState {
             },
         };
 
+        let toasts = Toasts::new(ctx.clone());
+
         let pipewire = PipewireInstance::new()
             .inspect_err(|e| eprintln!("Failed to start pipewire thread: {e}"))
             .ok();
 
         let encoder = encoder::EncoderRegistry::new(pipewire.as_ref().unwrap());
 
-        let input_state = input::InputState::new().unwrap();
+        let input_state = input::InputState::new(toasts.clone()).unwrap();
 
-        let remote_con = websocket::RemoteConnection::new(Arc::new(Mutex::new(encoder)), ctx.clone()).unwrap();
+        let remote_con = websocket::RemoteConnection::new(Arc::new(Mutex::new(encoder)), ctx.clone(), toasts.clone()).unwrap();
         // remote_con.channel.send(websocket::RemoteCommand::Connect).unwrap(); // dont connect by deafult anymore.
 
         Self {
@@ -110,7 +112,7 @@ impl AppState {
             pending_route: None,
             mode,
             events,
-            toasts: Toasts::default(),
+            toasts,
             active_session: None,
             egl,
             pipewire,

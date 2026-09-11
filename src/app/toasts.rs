@@ -86,14 +86,24 @@ impl Toast {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Toasts {
     items: Arc<Mutex<Vec<Toast>>>,
+    ctx: egui::Context
 }
 
 impl Toasts {
+    pub fn new(ctx: egui::Context) -> Self {
+        Self {
+            items: Default::default(),
+            ctx,
+        }
+    }
+
     pub fn push(&self, severity: Severity, title: impl Into<String>, body: impl Into<String>) {
         self.items.lock().unwrap().push(Toast::new(severity, title, body));
+
+        self.ctx.request_repaint();
     }
 
     /// A toast pinned to `target` session tile.
@@ -108,6 +118,8 @@ impl Toasts {
             .lock()
             .unwrap()
             .push(Toast { target: Some(target), ..Toast::new(severity, title, body) });
+
+        self.ctx.request_repaint();
     }
 
     /// A toast that opens `url` when clicked.
@@ -123,6 +135,8 @@ impl Toasts {
             expires_at: Some(Instant::now() + Duration::from_secs(12)),
             ..Toast::new(severity, title, body)
         });
+
+        self.ctx.request_repaint();
     }
 
     pub fn show(&self, ctx: &egui::Context) {

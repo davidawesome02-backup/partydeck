@@ -5,10 +5,11 @@ use std::{
     }, thread::{self, JoinHandle}, vec::Vec
 };
 
+use anyhow::Context;
 use evdev::{AbsoluteAxisCode, Device, EventSummary, InputEvent, InputId, KeyCode};
 use nix::{poll::{PollFd, PollFlags, PollTimeout, poll}, unistd::dup};
 
-use crate::app::PadFilterType;
+use crate::app::{PadFilterType, toasts};
 
 const POLL_TIMEOUT_MS: i32 = 5000;
 
@@ -75,14 +76,14 @@ pub struct DeviceRefrence {
 }
 
 impl DeviceRefrence {
-    pub fn new(state: &mut InputStateInner, dev_path: PathBuf) -> Result<Self, ()> {
+    pub fn new(state: &mut InputStateInner, dev_path: PathBuf) -> anyhow::Result<Self> {
         let out = Self::new_nofix(state, dev_path);
         state.fix_users();
         out
     }
 
-    pub fn new_nofix(state: &mut InputStateInner, dev_path: PathBuf) -> Result<Self, ()> {
-        let Some(dev_obj) = state.devices.get(&dev_path) else {return Err(())};
+    pub fn new_nofix(state: &mut InputStateInner, dev_path: PathBuf) -> anyhow::Result<Self> {
+        let dev_obj = state.devices.get(&dev_path).context("Failed to get device")?;
 
         Ok(Self::new_orphan_nofix(state, dev_obj.device_id, dev_obj.fancyname(), dev_obj.hash))
     }
@@ -336,13 +337,13 @@ impl InputStateInner {
         }
     }
 
-    fn fetch_and_dispatch_events(&mut self, path: PathBuf) -> Result<(), ()> {
-        let dev = self.devices.get_mut(&path).ok_or(())?; // Just ignore for now.
+    fn fetch_and_dispatch_events(&mut self, path: PathBuf) -> anyhow::Result<()> {
+        let dev = self.devices.get_mut(&path).context("Device missing")?; // Just ignore for now.
 
         let events = 
             dev.device.fetch_events()
             .and_then(|i| Ok(i.collect::<Vec<InputEvent>>()))
-            .map_err(|_| ())?; // Just ignore for now.
+            .context("Fetching device events")?; // Just ignore for now.
 
         if events.is_empty() {return Ok(());}
 
@@ -453,7 +454,7 @@ pub struct InputState {
 }
 
 impl InputState {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(toasts: toasts::Toasts) -> anyhow::Result<Self> {
 
         let inner = Arc::new(Mutex::new(InputStateInner::new()));
         let (shutdown_tx, shutdown_rx) = channel();
@@ -496,6 +497,13 @@ impl InputState {
                                     if device.name() == Some(PARTYDECK_REMOTE_DEV_NAME) {continue;}
 
                                     let _ = device.set_nonblocking(true);
+
+                                    toasts.push(
+                                        toasts::Severity::Info, 
+                                        "Device connected", 
+                                        format!("New device: {}", device.name().unwrap_or("Unnamed"))
+                                    );
+
                                     if let Ok(mut guard) = thread_inner.lock() {
                                         guard.add_device_obj(devnode.to_path_buf(), device);
                                     }
@@ -505,6 +513,14 @@ impl InputState {
                         Some("remove") => {
                             if let Some(devnode) = event.devnode() {
                                 if let Ok(mut guard) = thread_inner.lock() {
+                                    if let Some(d) = guard.devices.get(&devnode.to_path_buf()) {
+                                        toasts.push(
+                                            toasts::Severity::Info, 
+                                            "Device removed", 
+                                            format!("Device: {}", d.device.name().unwrap_or("Unnamed"))
+                                        );
+                                    }
+                                    
                                     guard.remove_device_obj(&devnode.to_path_buf());
                                 }
                             }

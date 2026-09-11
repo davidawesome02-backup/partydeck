@@ -4,7 +4,7 @@ mod events;
 mod panels;
 mod screens;
 mod state;
-mod toasts;
+pub(crate) mod toasts;
 
 pub use app::PartyApp;
 pub use config::PadFilterType;

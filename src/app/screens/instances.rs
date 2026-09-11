@@ -8,6 +8,7 @@ use crate::app::state::AppState;
 use crate::input::{DeviceRefrence, DeviceType};
 use crate::layout::LayoutKind;
 use crate::profiles::{next_temp_name, scan_profiles};
+use crate::remote::websocket::WebsocketConnectionStatus;
 use crate::session::{Display, InstanceAction, InstanceId};
 
 pub struct InstancesScreen {
@@ -56,14 +57,25 @@ impl Screen for InstancesScreen {
                     ui.label("Remote connection");
                     // todo position on side not full width?
                     // todo hook up
-                    if ui.button(if remote_state.connected {"Disconnect"} else {"Connect"}).clicked() {
-                        let _ = state.remote_con.channel.send(
-                            if remote_state.connected {
-                                crate::remote::websocket::RemoteCommand::Disconnect
-                            } else {
-                                crate::remote::websocket::RemoteCommand::Connect
-                            }
-                        );
+
+                    let button_text = match remote_state.status {
+                        WebsocketConnectionStatus::Connected => "Disconnect",
+                        WebsocketConnectionStatus::Disconnected => "Connect",
+                        WebsocketConnectionStatus::Connecting => "Connecting...",
+                        WebsocketConnectionStatus::Disconnecting => "Disconnecting...",
+                    };
+
+                    if ui.button(button_text).clicked() {
+
+                        if let Some(action) = match remote_state.status {
+                            WebsocketConnectionStatus::Connected => Some(crate::remote::websocket::RemoteCommand::Disconnect),
+                            WebsocketConnectionStatus::Disconnected => Some(crate::remote::websocket::RemoteCommand::Connect),
+                            WebsocketConnectionStatus::Connecting => None,
+                            WebsocketConnectionStatus::Disconnecting => None,
+                        } {
+                            let _ = state.remote_con.channel.send(action);
+                        }
+                        
                     };
 
                     if let Some(code) = &remote_state.code {
