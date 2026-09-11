@@ -491,6 +491,10 @@ impl InputState {
                         Some("add") => {
                             if let Some(devnode) = event.devnode() {
                                 if let Ok(device) = Device::open(devnode) {
+                                    // Ignore the virtual device we create, just a quick fix, may not be how we should do this.
+                                    use crate::remote::connection::PARTYDECK_REMOTE_DEV_NAME;
+                                    if device.name() == Some(PARTYDECK_REMOTE_DEV_NAME) {continue;}
+
                                     let _ = device.set_nonblocking(true);
                                     if let Ok(mut guard) = thread_inner.lock() {
                                         guard.add_device_obj(devnode.to_path_buf(), device);

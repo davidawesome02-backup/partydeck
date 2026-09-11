@@ -165,7 +165,7 @@ pub struct BindableVirtualDevice {
 impl BindableVirtualDevice {
     pub async fn new() -> anyhow::Result<Self> {
         let mut dev_builder = evdev::uinput::VirtualDevice::builder().context("Cant open uinput")?
-            .name(&"Partydeck Virtual Remote Controller")
+            .name(&PARTYDECK_REMOTE_DEV_NAME)
             .input_id(InputId::new(BusType::BUS_USB, 12, 12, 1))
             .with_keys(&evdev::AttributeSet::from_iter(PARTY_DECK_REMOTE_CONTROLLER_BUTTONS)).context("Invalid keys")?;
 
@@ -243,6 +243,8 @@ pub struct ServerInstanceInfo {
     color: String,
     alive: bool
 }
+
+pub static PARTYDECK_REMOTE_DEV_NAME: &str = "Partydeck Virtual Remote Controller";
 
 static PARTY_DECK_REMOTE_CONTROLLER_BUTTONS: [KeyCode; 17] = [ // Used as a bitmask, only append to work with new protos.
     KeyCode::BTN_SOUTH, // A
