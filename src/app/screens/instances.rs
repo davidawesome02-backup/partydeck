@@ -82,7 +82,7 @@ impl Screen for InstancesScreen {
                         ui.label(format!("Code: {code}", )); // Not connected, Connecting..., Current code: XXXXXX
                     }
 
-                    let clients = remote_state.get_alive_clients();
+                    let clients = remote_state.client_count.load(std::sync::atomic::Ordering::Relaxed);
                     if clients > 0 {
                         ui.label(format!("Clients: {clients}"));
 

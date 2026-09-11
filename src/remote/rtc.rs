@@ -1,4 +1,4 @@
-use std::{sync::{Arc, Mutex, OnceLock}, time::Duration};
+use std::{sync::{Arc, Mutex, OnceLock, atomic::{AtomicU64, Ordering}}, time::Duration};
 
 use anyhow::Context;
 use eframe::egui::{self, ViewportId};
@@ -268,7 +268,8 @@ impl RemoteClient {
         con_inner: Arc<Mutex<RemoteConnectionInner>>, 
         encoder: Arc<Mutex<EncoderRegistry>>, 
         egui_ctx: egui::Context,
-        toasts: toasts::Toasts
+        toasts: toasts::Toasts,
+        client_count: Arc<AtomicU64>
     ) -> Arc<Mutex<Self>> {
 
         let ret_self = Arc::new(Mutex::new(Self { connected: false, id: id.clone(), con_inner }));
@@ -276,11 +277,13 @@ impl RemoteClient {
         let self_arc_copy = ret_self.clone();
         
         tokio::spawn(async move {
+            client_count.fetch_add(1, Ordering::Relaxed);
             Self::inner(self_arc, offer, id, msg_resp, encoder, egui_ctx, toasts.clone()).await.map_err(|e| {
                 println!("Remote client failed with error: {}", e.backtrace());
             });
             toasts.push(toasts::Severity::Info, "Web client disconnected", "Remote connection closed");
             self_arc_copy.lock().unwrap().connected = false;
+            client_count.fetch_sub(1, Ordering::Relaxed);
         });
 
         ret_self

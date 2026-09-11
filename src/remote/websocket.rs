@@ -1,4 +1,4 @@
-use std::{collections::HashMap, str::FromStr, sync::{Arc, Mutex}, thread::{self, JoinHandle}, time::Duration};
+use std::{collections::HashMap, str::FromStr, sync::{Arc, Mutex, atomic::AtomicU64}, thread::{self, JoinHandle}, time::Duration};
 
 use eframe::egui;
 use futures_util::{SinkExt, StreamExt};
@@ -26,6 +26,7 @@ pub enum WebsocketConnectionStatus {
 } 
 
 pub struct RemoteConnection {
+    pub client_count: Arc<AtomicU64>,
     pub channel: UnboundedSender<RemoteCommand>,
     #[allow(unused)]
     thread: JoinHandle<()>,
@@ -33,11 +34,19 @@ pub struct RemoteConnection {
 }
 impl RemoteConnection {
     pub fn new(encoder: Arc<Mutex<EncoderRegistry>>, egui_ctx: egui::Context, toasts: toasts::Toasts) -> Result<Self, std::io::Error> {
-
+        let client_count = Arc::new(AtomicU64::new(0));
         let (send, rec) = unbounded_channel();
         
         let con_inner = Arc::new(Mutex::new(
-            RemoteConnectionInner{ session_data: None, code: None, status: WebsocketConnectionStatus::Disconnected, clients: HashMap::new(), encoder, egui_ctx }
+            RemoteConnectionInner{ 
+                session_data: None, 
+                code: None, 
+                status: WebsocketConnectionStatus::Disconnected, 
+                clients: HashMap::new(), 
+                encoder, 
+                egui_ctx,
+                client_count: client_count.clone()
+            }
         ));
         let con_inner_clone = con_inner.clone();
         
@@ -50,7 +59,7 @@ impl RemoteConnection {
             });
         });
 
-        Ok(Self { thread, inner: con_inner_clone.clone(), channel: send })
+        Ok(Self { thread, inner: con_inner_clone.clone(), channel: send, client_count })
     }
 
     pub fn update_session_data(&mut self, session_data: Option<Arc<Mutex<Session>>>) {
@@ -66,6 +75,7 @@ pub struct RemoteConnectionInner {
     clients: HashMap<String, Arc<Mutex<RemoteClient>>>,
     encoder: Arc<Mutex<EncoderRegistry>>,
     egui_ctx: egui::Context,
+    pub client_count: Arc<AtomicU64>
 }
 
 impl RemoteConnectionInner {
@@ -188,9 +198,18 @@ impl RemoteConnectionInner {
                 let mut self_ = self_arc.lock().unwrap();
                 let encoder_clone = self_.encoder.clone();
                 let egui_ctx_clone = self_.egui_ctx.clone();
+                let client_count_clone = self_.client_count.clone();
                 self_.clients.insert(
                     client_id.clone(),
-                    RemoteClient::new(offer, client_id, msg_resp, self_arc.clone(), encoder_clone, egui_ctx_clone, toasts.clone())
+                    RemoteClient::new(
+                        offer, 
+                        client_id, 
+                        msg_resp, self_arc.clone(), 
+                        encoder_clone, 
+                        egui_ctx_clone, 
+                        toasts.clone(), 
+                        client_count_clone
+                    )
                 );
             },
             
@@ -198,13 +217,6 @@ impl RemoteConnectionInner {
         }
 
         Ok(false)
-    }
-
-    // because called externally, I will assume they will borrow it, not me.
-    pub fn get_alive_clients(&self) -> usize {
-        self.clients.iter().filter(
-            |c| c.1.lock().unwrap().connected
-        ).count()
     }
 }
 
