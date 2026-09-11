@@ -255,7 +255,7 @@ async fn create_peer_connection(runtime: Arc<dyn Runtime>, handler: Arc<TestHand
 
 
 pub struct RemoteClient {
-    connected: bool,
+    pub connected: bool,
     #[allow(unused)]
     id: String,
     pub con_inner: Arc<Mutex<RemoteConnectionInner>>

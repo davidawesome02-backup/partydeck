@@ -41,6 +41,47 @@ impl Screen for InstancesScreen {
                     .on_hover_text("Right panel");
                 ui.toggle_value(&mut self.show_bottom_panel, "🛠")
                     .on_hover_text("Display controls");
+
+                // ui.toggle_value(&mut self.show_remote_popup, "\u{01F5A7}");
+                let button_response = ui.button("\u{01F5A7}");
+                egui::Popup::menu(&button_response)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .align(egui::RectAlign {
+                        parent: egui::Align2::LEFT_BOTTOM,
+                        child: egui::Align2::CENTER_TOP,
+                    })
+                    .show(|ui| {
+
+                    let remote_state = state.remote_con.inner.lock().unwrap();
+                    ui.label("Remote connection");
+                    // todo position on side not full width?
+                    // todo hook up
+                    if ui.button(if remote_state.connected {"Disconnect"} else {"Connect"}).clicked() {
+                        let _ = state.remote_con.channel.send(
+                            if remote_state.connected {
+                                crate::remote::websocket::RemoteCommand::Disconnect
+                            } else {
+                                crate::remote::websocket::RemoteCommand::Connect
+                            }
+                        );
+                    };
+
+                    if let Some(code) = &remote_state.code {
+                        ui.label(format!("Code: {code}", )); // Not connected, Connecting..., Current code: XXXXXX
+                    }
+
+                    let clients = remote_state.get_alive_clients();
+                    if clients > 0 {
+                        ui.label(format!("Clients: {clients}"));
+
+                        // Todo make this work lol
+                        // if ui.button("Kick clients").clicked() {
+                        //     state.remote_con.channel.send(
+                        //         crate::remote::websocket::RemoteCommand::KickAll
+                        //     );
+                        // }
+                    }
+                })
             });
         });
 
@@ -185,8 +226,9 @@ impl InstancesScreen {
             InstanceAction::None => {},
             InstanceAction::Edit(id) => self.edit_modal = Some(id),
             InstanceAction::Remove(id) => {
-                state.session.remove_instance(id);
+                state.session.remove_instance(&mut state.input_state.inner(), id);
                 self.clear_selections();
+
             }
             InstanceAction::Swap(a, b) => state.session.swap(a, b),
         }

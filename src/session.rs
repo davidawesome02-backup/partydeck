@@ -651,10 +651,12 @@ impl Session {
         id
     }
 
-    pub fn remove_instance(&mut self, id: InstanceId) {
+    pub fn remove_instance(&mut self, in_state: &mut InputStateInner, id: InstanceId) {
         for display in &mut self.displays {
             if let Some(i) = display.instances.iter().position(|instance| instance.id == id) {
-                display.instances.remove(i);
+                let mut instance = display.instances.remove(i);
+                instance.devices.iter_mut().for_each(|d| d.pre_drop_nofix(in_state));
+                in_state.fix_users();
                 break;
             }
         }

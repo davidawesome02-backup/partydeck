@@ -14,6 +14,7 @@ type WsType = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStre
 pub enum RemoteCommand {
     Connect,
     Disconnect,
+    // KickAll,
     Terminate,
 }
 
@@ -95,6 +96,10 @@ impl RemoteConnectionInner {
                     Some(RemoteCommand::Terminate) => {
                         return Ok(());
                     },
+                    // Some(RemoteCommand::KickAll) => {
+                    //     let mut self_ = self_arc.lock().unwrap();
+                    //     self_.clients.drain();
+                    // }
                     None => {},
                 },
                 ws_msg = async {if let Some(ref mut ws) = ws {ws.next().await} else {std::future::pending().await}} => {
@@ -127,6 +132,7 @@ impl RemoteConnectionInner {
                 let mut self_ = self_arc.lock().unwrap();
                 self_.connected = false;
                 self_.code = None;
+                println!("Disconnected from websocket!");
             }
         }
     }
@@ -161,6 +167,13 @@ impl RemoteConnectionInner {
         }
 
         Ok(false)
+    }
+
+    // because called externally, I will assume they will borrow it, not me.
+    pub fn get_alive_clients(&self) -> usize {
+        self.clients.iter().filter(
+            |c| c.1.lock().unwrap().connected
+        ).count()
     }
 }
 
