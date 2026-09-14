@@ -1,4 +1,5 @@
 use crate::paths::{PATH_HOME, PATH_PARTY};
+use crate::video::pipewire::DmaBufFrame;
 
 use bytes::Bytes;
 use eframe::egui::Color32;
@@ -352,26 +353,37 @@ use nix::sys::mman::{
     ProtFlags,
 };
 
-// For now ignoring stride, assuming stride == width*4
-pub fn dmabuf_bgrx_to_jpeg(
-    fd: RawFd,
-    width: u32,
-    height: u32,
-) -> Result<Bytes> {
+pub fn dmabuf_bgrx_to_jpeg(frame: &DmaBufFrame) -> Result<Bytes> {
+    let width = frame.width;
+    let height = frame.height;
+
     if width == 0 || height == 0 {
         bail!("image dimensions must be non-zero");
     }
 
-    let input_len = (width as usize)
-        .checked_mul(height as usize)
-        .and_then(|size| size.checked_mul(4))
+    let width_usize = width as usize;
+    let height_usize = height as usize;
+
+    let row_bytes = width_usize
+        .checked_mul(4)
+        .context("input row size overflow")?;
+
+    let stride = usize::try_from(frame.stride)
+        .context("stride must be non-negative")?;
+
+    if stride < row_bytes {
+        bail!("stride is smaller than width * 4");
+    }
+
+    let input_len = stride
+        .checked_mul(height_usize)
         .context("input image size overflow")?;
 
     let map_len = NonZeroUsize::new(input_len)
         .context("cannot mmap an empty image")?;
 
     let borrowed_fd = unsafe {
-        BorrowedFd::borrow_raw(fd)
+        BorrowedFd::borrow_raw(frame.fd as RawFd)
     };
 
     let mapped = unsafe {
@@ -381,28 +393,33 @@ pub fn dmabuf_bgrx_to_jpeg(
             ProtFlags::PROT_READ,
             MapFlags::MAP_SHARED,
             borrowed_fd,
-            0,
+            frame.offset as i64,
         )
     }
     .context("mmap dmabuf")?;
 
-    // Copy and swizzle BGRx -> RGB while the dmabuf is mapped.
+    // Copy and swizzle BGRX -> RGB while the dmabuf is mapped.
     let rgb_bytes = unsafe {
-        let bgrx = slice::from_raw_parts(
-            mapped.as_ptr() as *const u8,
-            input_len,
-        );
+        let bgrx = mapped.as_ptr() as *const u8;
 
         let mut rgb = Vec::with_capacity(
-            width as usize * height as usize * 3,
+            width_usize
+                .checked_mul(height_usize)
+                .and_then(|size| size.checked_mul(3))
+                .context("RGB image size overflow")?,
         );
 
-        for pixel in bgrx.chunks_exact(4) {
-            let b = pixel[0];
-            let g = pixel[1];
-            let r = pixel[2];
+        for y in 0..height_usize {
+            let row = slice::from_raw_parts(
+                bgrx.add(y * stride),
+                row_bytes,
+            );
 
-            rgb.extend_from_slice(&[r, g, b]);
+            for pixel in row.chunks_exact(4) {
+                rgb.push(pixel[2]); // R
+                rgb.push(pixel[1]); // G
+                rgb.push(pixel[0]); // B
+            }
         }
 
         munmap(mapped, input_len)
@@ -442,7 +459,6 @@ pub fn dmabuf_bgrx_to_jpeg(
 
     let mut jpeg = Vec::new();
 
-    // Quality 4, as requested.
     let mut encoder = JpegEncoder::new_with_quality(&mut jpeg, 40);
 
     encoder

@@ -278,8 +278,8 @@ impl RemoteClient {
         
         tokio::spawn(async move {
             client_count.fetch_add(1, Ordering::Relaxed);
-            Self::inner(self_arc, offer, id, msg_resp, encoder, egui_ctx, toasts.clone()).await.map_err(|e| {
-                println!("Remote client failed with error: {}", e.backtrace());
+            let _ = Self::inner(self_arc, offer, id, msg_resp, encoder, egui_ctx, toasts.clone()).await.map_err(|e| {
+                println!("Remote client failed with error: {:?}", e);
             });
             toasts.push(toasts::Severity::Info, "Web client disconnected", "Remote connection closed");
             self_arc_copy.lock().unwrap().connected = false;

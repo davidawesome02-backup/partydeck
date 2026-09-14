@@ -130,7 +130,7 @@ pub async fn handle_remote_message(
             let now = std::time::Instant::now();
 
             let Some(preview_data) = ({
-                let mut running_session_data = arc_running_session_data.lock().unwrap();
+                let running_session_data = arc_running_session_data.lock().unwrap();
 
                 running_session_data.displays.iter().find_map(|d| {
                     d.instances.iter().find(|i| {
@@ -149,7 +149,7 @@ pub async fn handle_remote_message(
 
                     Some((
                         ld.preview_frame.clone().and_then(|pf| {
-                            if now - pf.0 < std::time::Duration::from_secs(14) {
+                            if now - pf.0 < std::time::Duration::from_secs(4) {
                                 Some(pf.1)
                             } else {
                                 None
@@ -163,7 +163,9 @@ pub async fn handle_remote_message(
             let frame_encoded_data: Option<String>;
 
             if preview_data.0.is_none() && let Some(dmabuf_fd) = preview_data.1 {
-                let Ok(bytes) = dmabuf_bgrx_to_jpeg(dmabuf_fd.fd.try_into().unwrap(), dmabuf_fd.width, dmabuf_fd.height) else {return Ok(None)};
+                // TODO push onto a new thread!
+                let async_jpeg_conversion = tokio::task::spawn_blocking(move || {dmabuf_bgrx_to_jpeg(&dmabuf_fd)}).await.context("JPEG conversion")?;
+                let Ok(bytes) = async_jpeg_conversion else {return Ok(None)};
                 let data_b64 = format!("data:image/jpeg;base64,{}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes));
             
 
