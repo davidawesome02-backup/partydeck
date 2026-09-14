@@ -5,6 +5,7 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::process::Command;
 use std::sync::{Arc, RwLock, Mutex};
 
+use bytes::Bytes;
 use eframe::egui::{self, Color32};
 use evdev::InputEvent;
 
@@ -16,7 +17,7 @@ use crate::unshare::{NamespaceSetup, RemoteNamespace};
 use crate::util::next_instance_color;
 use crate::video::egl::EglApi;
 use crate::video::gamescope::{GamescopeWaylandState, InstanceStreamView};
-use crate::video::pipewire::{PipewireCommand, PipewireID, PipewireInstance, PipewireStream};
+use crate::video::pipewire::{DmaBufFrame, PipewireCommand, PipewireID, PipewireInstance, PipewireStream};
 use pipewire as pw;
 
 use std::time::{Duration, Instant};
@@ -56,7 +57,9 @@ pub struct InstanceLaunched {
 
     pub starting_position: WindowPosition,
 
-    pub input_events: Arc<Mutex<Vec<InstanceInputEvt>>>
+    pub input_events: Arc<Mutex<Vec<InstanceInputEvt>>>,
+
+    pub preview_frame: Option<(std::time::Instant, String)>,
 }
 
 #[derive(PartialEq)]
@@ -197,6 +200,8 @@ impl Instance {
             starting_position: position,
 
             input_events: Arc::new(Mutex::new(Vec::new())),
+
+            preview_frame: None,
         });
 
         if let Some(delay) = self.handler.pause_between_starts {

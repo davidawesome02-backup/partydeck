@@ -24,7 +24,7 @@ steamlocate = "2.0.1"
 zip = { version = "5.1.1", features = ["deflate", "deflate64"], default-features = false }
 pathsearch = "0.2.0"
 pipewire = "0.10"
-nix = { version = "0.30", default-features = false, features = ["poll", "fs", "ioctl", "user", "process", "net", "mount", "sched", "signal"] }
+nix = { version = "0.30", default-features = false, features = ["poll", "fs", "ioctl", "user", "process", "net", "mount", "sched", "signal", "mman"] }
 wayland-client = "0.31"
 wayland-scanner = "0.31"
 wayland-backend = "0.3"
@@ -39,8 +39,8 @@ webrtc = "0.20.3"
 rtc = "0.20.3"
 async-trait = "0.1.92"
 ffmpeg-next = { version = "9.0.0", default-features = false, features = ["codec", "filter", "format"] } #, "build"
-bytes = "1"
-
+bytes = "1" # Already in use 
+base64 = "0.22" # Already in use 
 
 [patch.crates-io]
 eframe = { git = "https://github.com/partydeck/egui.git", branch = "partydeck-patches" }

@@ -1,5 +1,6 @@
 use crate::paths::{PATH_HOME, PATH_PARTY};
 
+use bytes::Bytes;
 use eframe::egui::Color32;
 use rfd::FileDialog;
 use std::error::Error;
@@ -326,4 +327,132 @@ pub fn next_instance_color(used: &[Color32]) -> Color32 {
         .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
         .unwrap()
         .1
+}
+
+
+use std::{
+    num::NonZeroUsize,
+    os::fd::{BorrowedFd, RawFd},
+    slice,
+};
+
+use anyhow::{bail, Context, Result};
+
+use image::{
+    codecs::jpeg::JpegEncoder,
+    imageops::FilterType,
+    ColorType,
+    RgbImage,
+};
+
+use nix::sys::mman::{
+    mmap,
+    munmap,
+    MapFlags,
+    ProtFlags,
+};
+
+// For now ignoring stride, assuming stride == width*4
+pub fn dmabuf_bgrx_to_jpeg(
+    fd: RawFd,
+    width: u32,
+    height: u32,
+) -> Result<Bytes> {
+    if width == 0 || height == 0 {
+        bail!("image dimensions must be non-zero");
+    }
+
+    let input_len = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|size| size.checked_mul(4))
+        .context("input image size overflow")?;
+
+    let map_len = NonZeroUsize::new(input_len)
+        .context("cannot mmap an empty image")?;
+
+    let borrowed_fd = unsafe {
+        BorrowedFd::borrow_raw(fd)
+    };
+
+    let mapped = unsafe {
+        mmap(
+            None,
+            map_len,
+            ProtFlags::PROT_READ,
+            MapFlags::MAP_SHARED,
+            borrowed_fd,
+            0,
+        )
+    }
+    .context("mmap dmabuf")?;
+
+    // Copy and swizzle BGRx -> RGB while the dmabuf is mapped.
+    let rgb_bytes = unsafe {
+        let bgrx = slice::from_raw_parts(
+            mapped.as_ptr() as *const u8,
+            input_len,
+        );
+
+        let mut rgb = Vec::with_capacity(
+            width as usize * height as usize * 3,
+        );
+
+        for pixel in bgrx.chunks_exact(4) {
+            let b = pixel[0];
+            let g = pixel[1];
+            let r = pixel[2];
+
+            rgb.extend_from_slice(&[r, g, b]);
+        }
+
+        munmap(mapped, input_len)
+            .context("munmap dmabuf")?;
+
+        rgb
+    };
+
+    let image = RgbImage::from_raw(width, height, rgb_bytes)
+        .context("invalid RGB image dimensions")?;
+
+    // Do not upscale. If either dimension is larger than 512,
+    // scale the image so its largest dimension becomes 512.
+    let largest_dimension = width.max(height);
+
+    let (output_width, output_height) = if largest_dimension > 512 {
+        let scale = 512.0 / largest_dimension as f64;
+
+        let output_width = ((width as f64 * scale).round() as u32).max(1);
+        let output_height = ((height as f64 * scale).round() as u32).max(1);
+
+        (output_width, output_height)
+    } else {
+        (width, height)
+    };
+
+    let resized = if output_width == width && output_height == height {
+        image
+    } else {
+        image::imageops::resize(
+            &image,
+            output_width,
+            output_height,
+            FilterType::Triangle,
+        )
+    };
+
+    let mut jpeg = Vec::new();
+
+    // Quality 4, as requested.
+    let mut encoder = JpegEncoder::new_with_quality(&mut jpeg, 40);
+
+    encoder
+        .encode(
+            resized.as_raw(),
+            resized.width(),
+            resized.height(),
+            ColorType::Rgb8.into(),
+        )
+        .context("encode JPEG")?;
+
+    Ok(Bytes::from(jpeg))
 }

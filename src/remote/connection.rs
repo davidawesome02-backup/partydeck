@@ -6,7 +6,7 @@ use std::{path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 use anyhow::Context;
 use tokio::{sync::mpsc::UnboundedSender};
 
-use crate::{remote::{encoder::{EncoderReference, EncoderRegistry}, rtc::RemoteClient}, session::InstanceInputEvt};
+use crate::{remote::{encoder::{EncoderReference, EncoderRegistry}, rtc::RemoteClient}, session::InstanceInputEvt, util::dmabuf_bgrx_to_jpeg};
 use bytes::{self, Bytes};
 
 
@@ -121,6 +121,73 @@ pub async fn handle_remote_message(
 
             Ok(None)
         },
+
+        RTCClientMessage::RequestPreview { id } => {
+            let Some(arc_running_session_data) = ({
+                &self_arc.lock().unwrap().con_inner.lock().unwrap().session_data.clone()
+            }) else {return Ok(None)};
+            
+            let now = std::time::Instant::now();
+
+            let Some(preview_data) = ({
+                let mut running_session_data = arc_running_session_data.lock().unwrap();
+
+                running_session_data.displays.iter().find_map(|d| {
+                    d.instances.iter().find(|i| {
+                        i.id.0 == id
+                    })
+                }).and_then(|inst| {
+                    let Some(ref ld) = inst.launch_data else {return None};
+
+                    let Some(ref sv) = ld.stream_view else {return None};
+                    let Ok(pw) = ld.pw_streams.read() else {return None};
+                    let Some(pw_frame) = pw.get(&sv.pipewire_node) else {return None};
+                    let Ok(pw_frame_read) = pw_frame.read() else {return None};
+                    if !pw_frame_read.streaming {return None};
+                    // recorded latest frame
+                    let Some(dmabuf_fd) = pw_frame_read.latest_frame else {return None};
+
+                    Some((
+                        ld.preview_frame.clone().and_then(|pf| {
+                            if now - pf.0 < std::time::Duration::from_secs(14) {
+                                Some(pf.1)
+                            } else {
+                                None
+                            }
+                        }), 
+                        Some(dmabuf_fd)
+                    ))
+                })
+            }) else {return Ok(None)};
+
+            let frame_encoded_data: Option<String>;
+
+            if preview_data.0.is_none() && let Some(dmabuf_fd) = preview_data.1 {
+                let Ok(bytes) = dmabuf_bgrx_to_jpeg(dmabuf_fd.fd.try_into().unwrap(), dmabuf_fd.width, dmabuf_fd.height) else {return Ok(None)};
+                let data_b64 = format!("data:image/jpeg;base64,{}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes));
+            
+
+                let mut running_session_data = arc_running_session_data.lock().unwrap();
+
+                let Some(ld) =  running_session_data.displays.iter_mut().find_map(|d| {
+                    d.instances.iter_mut().find(|i| {
+                        i.id.0 == id
+                    })
+                }).and_then(|inst| {
+                    inst.launch_data.as_mut()
+                }) else {return Ok(None)};
+
+                ld.preview_frame = Some((now, data_b64.clone()));
+
+                frame_encoded_data = Some(data_b64);
+            } else {
+                frame_encoded_data = preview_data.0;
+            }
+            
+            let Some(data_b64) = frame_encoded_data else {return Ok(None)};
+
+            Ok(Some(serde_json::to_string(&RTCServerMessage::PreviewInstance { id, data: data_b64.clone() })?))
+        }
     }
 }
 
@@ -222,7 +289,10 @@ pub enum RTCClientMessage {
     Select {id: Option<u64>},
 
     #[serde(rename = "remote_input")]
-    RemoteInput {input_type: u16, input_code: u16, input_value: i32}
+    RemoteInput {input_type: u16, input_code: u16, input_value: i32},
+
+    #[serde(rename = "request_preview")]
+    RequestPreview {id: u64}
 }
 
 
@@ -234,6 +304,9 @@ pub enum RTCServerMessage {
 
     #[serde(rename = "status_started")]
     StatusStarted { instances: Vec<ServerInstanceInfo>, has_controller_support: bool },
+
+    #[serde(rename = "preview_instance")]
+    PreviewInstance { id: u64, data: String },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
