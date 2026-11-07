@@ -41,6 +41,7 @@ async-trait = "0.1.92"
 ffmpeg-next = { version = "9.0.0", default-features = false, features = ["codec", "filter", "format"] } #, "build"
 bytes = "1" # Already in use 
 base64 = "0.22" # Already in use 
+shell-words = "1.1.1"
 
 [patch.crates-io]
 eframe = { git = "https://github.com/partydeck/egui.git", branch = "partydeck-patches" }

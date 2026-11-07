@@ -37,7 +37,18 @@ impl Screen for SessionScreen {
                 let Some(ref pipewire_st) = state.pipewire else {
                     return //TODO replace this
                 };
-                display.start_display(ui, next_timeout, egui::ViewportId::from_hash_of(&title), state.egl.clone(), pipewire_st, state.monitors[display.monitor_idx].clone(), state.input_state.clone_inner());
+                
+                display.start_display(
+                    ui, 
+                    next_timeout, 
+                    egui::ViewportId::from_hash_of(&title), 
+                    state.egl.clone(), 
+                    pipewire_st, 
+                    state.monitors[display.monitor_idx].clone(), 
+                    state.input_state.clone_inner(),
+                    self.handler.clone(),
+                    state.options.clone(),
+                );
             }
             println!("Starting display!");
         }

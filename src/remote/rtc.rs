@@ -281,6 +281,7 @@ impl RemoteClient {
             let _ = Self::inner(self_arc, offer, id, msg_resp, encoder, egui_ctx, toasts.clone()).await.map_err(|e| {
                 println!("Remote client failed with error: {:?}", e);
             });
+            // TODO: this doesnt properly close the PC when we exit here, maybe keep pc on self_arc so we can close it directly if a error occors.
             toasts.push(toasts::Severity::Info, "Web client disconnected", "Remote connection closed");
             self_arc_copy.lock().unwrap().connected = false;
             client_count.fetch_sub(1, Ordering::Relaxed);

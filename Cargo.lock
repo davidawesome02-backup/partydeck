@@ -3689,6 +3689,7 @@ dependencies = [
  "serde_json",
  "sevenz-rust2",
  "sha2",
+ "shell-words",
  "steamlocate",
  "tar",
  "tokio",
@@ -5077,6 +5078,12 @@ dependencies = [
  "cpufeatures 0.2.17",
  "digest 0.10.7",
 ]
+
+[[package]]
+name = "shell-words"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc6fe69c597f9c37bfeeeeeb33da3530379845f10be461a66d16d03eca2ded77"
 
 [[package]]
 name = "shlex"

@@ -1,18 +1,17 @@
-use std::os::fd::{AsRawFd, OwnedFd};
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+// use std::os::fd::{AsRawFd, OwnedFd};
+// use std::path::{Path, PathBuf};
+// use std::process::{Child, Command};
 
-use crate::app::{PadFilterType, PartyConfig};
-use crate::handler::*;
-use crate::input::*;
-use crate::layout::WindowPosition;
-use crate::monitor::Monitor;
-use crate::paths::*;
-use crate::profiles::{create_profile, create_profile_gamesave};
-use crate::session::{InstanceId, Session};
-use crate::util::*;
+// use crate::app::{PadFilterType, PartyConfig};
+// use crate::handler::*;
+// use crate::input::*;
+// use crate::layout::WindowPosition;
+// use crate::monitor::Monitor;
+// use crate::paths::*;
+// use crate::profiles::{create_profile, create_profile_gamesave};
+// use crate::util::*;
 // use crate::video::gamescope::GamescopeConnection;
-
+/*
 pub struct LaunchPlan {
     instances: Vec<InstanceSpec>,
     displays: Vec<DisplaySpec>,
@@ -582,5 +581,519 @@ fn fuse_overlayfs_mount_gamedirs(
 
     Ok(())
 }
+
+
+
+
+
+
+*/
+
+
+
+
+
+
+
+
+
+
+use std::os::fd::AsRawFd;
+use std::process::Command;
+use std::time::{Duration, Instant};
+
+use crate::session::{Instance, InstanceId, InstanceInputEvt, Session};
+use crate::unshare::{NamespaceSetup, RemoteNamespace};
+
+
+
+
+
+fn launch_cmds(
+    h: &Handler,
+    plan: &LaunchPlan,
+    cfg: &PartyConfig,
+) -> Result<(Vec<std::process::Command>, Vec<ReadyPipe>), Box<dyn std::error::Error>> {
+    return Ok((Vec::new(), Vec::new()));
+    let win = h.win();
+    let exec = Path::new(&h.exec);
+    let runtime = h.runtime.as_str();
+    let gamescope = match cfg.kbm_support {
+        true => BIN_GSC_KBM.as_path(),
+        false => Path::new("gamescope"),
+    };
+
+    if cfg.kbm_support && !gamescope.exists() {
+        return Err("gamescope-kbm is missing. Please reinstall partydeck or disable KBM support.".into());
+    }
+
+    if !cfg.kbm_support && pathsearch::find_executable_in_path("gamescope").is_none() {
+        return Err("gamescope not found in PATH. Please install gamescope through your distro's package manager.".into());
+    }
+
+    if (runtime == "scout" && !PATH_STEAM.join("bin32/steam-runtime/run.sh").exists())
+        || (runtime == "soldier"
+            && !PATH_STEAM
+                .join("steam/steamapps/common/SteamLinuxRuntime_soldier")
+                .exists())
+        || (runtime == "sniper"
+            && !PATH_STEAM.join("steam/steamapps/common/SteamLinuxRuntime_sniper").exists()
+            && !PATH_STEAM.join("steam/steamapps/common/SteamLinuxRuntime_sniper-arm64").exists())
+        || (runtime == "steamrt4"
+            && !PATH_STEAM.join("steam/steamapps/common/SteamLinuxRuntime_4").exists())
+    {
+        return Err(format!("Steam Runtime {runtime} not found! Runtime must be installed on the same drive that the Steam client is installed on.").into());
+    }
+
+    let mut cmds: Vec<Command> = (0..plan.instances.len())
+        .map(|_| Command::new(gamescope))
+        .collect();
+    let mut ready_pipes: Vec<ReadyPipe> = Vec::with_capacity(plan.instances.len());
+
+    for (i, instance) in plan.instances.iter().enumerate() {
+        let (width, height) = (instance.rect.w, instance.rect.h);
+
+        let gamedir = if h.is_saved_handler() && !cfg.disable_mount_gamedirs && cfg.profile_unique_dirs {
+            PATH_PARTY.join("tmp").join(format!("game-{}", i))
+        } else {
+            PathBuf::from(h.get_game_rootpath()?)
+        };
+
+        if !gamedir.join(exec).exists() {
+            return Err(format!("Executable not found: {}", gamedir.join(exec).display()).into());
+        }
+
+        let path_exec = gamedir.join(exec);
+        let cwd = path_exec.parent().ok_or_else(|| "couldn't get parent")?;
+
+        let path_prof = PATH_PARTY.join("profiles").join(&instance.profname);
+        let path_pfx = PATH_PARTY
+            .join("prefixes")
+            .join(match cfg.proton_separate_pfxs {
+                true => (i + 1).to_string(),
+                false => "1".to_string(),
+            });
+
+        let cmd = &mut cmds[i];
+
+        cmd.current_dir(cwd);
+
+        cmd.env("SDL_JOYSTICK_HIDAPI", "0");
+        cmd.env("ENABLE_GAMESCOPE_WSI", "0");
+        if h.sdl2_override != SDL2Override::No {
+            let path_sdl = match h.sdl2_override {
+                SDL2Override::Srt => {
+                    PATH_STEAM.join("bin32/steam-runtime/usr/lib/i386-linux-gnu/libSDL2-2.0.so.0")
+                }
+                SDL2Override::Sys => PathBuf::from("/usr/lib/libSDL2.so"),
+                _ => PathBuf::new(),
+            };
+            cmd.env("SDL_DYNAMIC_API", path_sdl);
+        }
+        if win {
+            let protonpath = match cfg.proton_version.is_empty() {
+                true => "GE-Proton",
+                false => &cfg.proton_version,
+            };
+
+            cmd.env("WINEPREFIX", &path_pfx);
+            cmd.env("PROTON_VERB", "run");
+            cmd.env("PROTONPATH", protonpath);
+            cmd.env("PROTON_DISABLE_HIDRAW", "1");
+            if cfg.proton_wow64 {
+                cmd.env("PROTON_USE_WOW64", "1");
+            }
+        }
+        if cfg.pad_filter_type != PadFilterType::NoSteamInput {
+            cmd.env("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD", "1");
+        }
+        if cfg.pad_filter_type == PadFilterType::OnlySteamInput {
+            cmd.env("SDL_GAMECONTROLLER_IGNORE_DEVICES", SDL_GAMECONTROLLER_IGNORE_DEVICES);
+        }
+        if !h.env.is_empty() {
+            for env_var in h.env.split_whitespace() {
+                if let Some((key, value)) = env_var.split_once('=') {
+                    cmd.env(key, value);
+                }
+            }
+        }
+
+        // Gamescope args
+        if h.use_mangohud {
+            cmd.arg("--mangoapp");
+        }
+        cmd.args(["-W", &width.to_string(), "-H", &height.to_string()]);
+        if cfg.gamescope_force_grab_cursor {
+            cmd.arg("--force-grab-cursor");
+        }
+
+        cmd.args(["--backend", "headless"]);
+        cmd.arg("--composite-cursor");
+        cmd.args(["-r", &plan.displays[instance.display].refresh_rate.to_string()]);
+
+        // Readiness pipe: gamescope writes its display names here once its
+        // nested Wayland server is up, letting the worker connect the stream.
+        let (ready_read, ready_write) = nix::unistd::pipe()?;
+        cmd.args(["-R", &format!("/proc/self/fd/{}", ready_write.as_raw_fd())]);
+        ready_pipes.push((ready_read, ready_write));
+
+        if cfg.kbm_support {
+            let mut instance_has_keyboard = false;
+            let mut instance_has_mouse = false;
+            let mut kbms = String::new();
+
+            for dev in &plan.devices {
+                if !instance.devices.contains(&dev.hash) {
+                    continue;
+                }
+                if dev.device_type == DeviceType::Keyboard {
+                    instance_has_keyboard = true;
+                } else if dev.device_type == DeviceType::Mouse {
+                    instance_has_mouse = true;
+                }
+                if dev.device_type == DeviceType::Keyboard || dev.device_type == DeviceType::Mouse {
+                    kbms.push_str(&format!("{},", &dev.path));
+                }
+            }
+
+            if instance_has_keyboard {
+                cmd.arg("--backend-disable-keyboard");
+            }
+            if instance_has_mouse {
+                cmd.arg("--backend-disable-mouse");
+            }
+            if !kbms.is_empty() {
+                cmd.arg(format!("--libinput-hold-dev={}", kbms));
+                cmd.arg("--grab");
+            }
+        }
+        cmd.arg("--");
+
+        // Bwrap args
+        cmd.arg("bwrap");
+        cmd.arg("--die-with-parent");
+        cmd.args(["--dev-bind", "/", "/"]);
+        cmd.args(["--tmpfs", "/tmp"]);
+        // Mask out any gamepads that aren't this player's
+        for dev in &plan.devices {
+            if !dev.enabled
+                || (!instance.devices.contains(&dev.hash) && dev.device_type == DeviceType::Gamepad)
+            {
+                cmd.args(["--bind", "/dev/null", &dev.path]);
+            }
+        }
+
+        if cfg.profile_unique_dirs {
+            if win {
+                let path_pfx_user = path_pfx.join("drive_c/users/steamuser");
+                cmd.arg("--bind")
+                    .args([&path_prof.join("windata"), &path_pfx_user]);
+            } else {
+                let path_prof_home = path_prof.join("home");
+                cmd.env("HOME", &path_prof_home);
+                // Also bind the Steam directory as the Steam runtimes look for HOME/.steam
+                if !runtime.is_empty() || h.steam_appid.is_some() {
+                    cmd.args([
+                        "--bind",
+                        &PATH_STEAM.to_string_lossy(),
+                        &path_prof_home.join(".steam").to_string_lossy(),
+                    ]);
+                }
+            }
+        }
+
+        for subpath in &h.game_null_paths {
+            let game_subpath = gamedir.join(subpath);
+            if game_subpath.is_file() {
+                cmd.args(["--bind", "/dev/null", &game_subpath.to_string_lossy()]);
+            } else if game_subpath.is_dir() {
+                cmd.args([
+                    "--bind",
+                    &PATH_PARTY.join("tmp/null").to_string_lossy(),
+                    &game_subpath.to_string_lossy(),
+                ]);
+            }
+        }
+
+        let is_appimage = std::env::var("APPIMAGE").is_ok();
+        if is_appimage {
+            // Because we are faking temp directory, this makes the system use the real vulkan directory for games
+            // Used here because the env var is set durring bwrap and gamescope process starting so env cant be cleared at this stage.
+            cmd.args(["--unsetenv","VK_DRIVER_FILES"]); 
+        }
+
+        if h.use_goldberg {
+            cmd.env("GseAppPath", PATH_PARTY.join("goldberg_data"));
+            cmd.env("GseSavePath", path_prof.join("steam"));
+            cmd.env("SteamAppUser", instance.profname.clone());
+            cmd.env("SteamUser", instance.profname.clone());
+            cmd.env("SteamClientLaunch", "1");
+            cmd.env("SteamEnv", "1");
+            if let Some(appid) = h.steam_appid {
+                cmd.env("SteamAppId", &appid.to_string());
+                cmd.env("SteamGameId", &appid.to_string());
+            }
+
+            let sdk32_link = std::fs::read_link(PATH_STEAM.join("sdk32")).map_err(|e| format!("Failed to read sdk32 link: {}", e))?;
+            let sdk64_link = std::fs::read_link(PATH_STEAM.join("sdk64")).map_err(|e| format!("Failed to read sdk64 link: {}", e))?;
+
+            cmd.arg("--bind").args([
+                PATH_RES.join("goldberg/linux32"),
+                sdk32_link,
+            ]);
+
+            cmd.arg("--bind").args([
+                PATH_RES.join("goldberg/linux64"),
+                sdk64_link,
+            ]);
+
+            if win {
+                cmd.arg("--bind").args([
+                    PATH_RES.join("goldberg/win"),
+                    path_pfx.join("drive_c/Program Files (x86)/Steam"),
+                ]);
+            }
+        }
+
+        // Runtime
+        if win {
+            cmd.arg(&*BIN_UMU_RUN);
+        } else {
+            match runtime {
+                "scout" => {
+                    cmd.arg(PATH_STEAM.join("bin32/steam-runtime/run.sh"));
+                }
+                "soldier" => {
+                    cmd.arg(
+                        PATH_STEAM.join(
+                            "steam/steamapps/common/SteamLinuxRuntime_soldier/_v2-entry-point",
+                        ),
+                    );
+                    cmd.arg("--");
+                }
+                "sniper" => {
+                    let sniper_path = PATH_STEAM.join(
+                        "steam/steamapps/common/SteamLinuxRuntime_sniper/_v2-entry-point",
+                    );
+                    // old installations of sniper go in a folder named -arm64 even though it is x86_64?
+                    let sniper_arm_path = PATH_STEAM.join(
+                        "steam/steamapps/common/SteamLinuxRuntime_sniper-arm64/_v2-entry-point",
+                    );
+                    if sniper_path.exists() {
+                        cmd.arg(sniper_path);
+                    } else if sniper_arm_path.exists() {
+                        cmd.arg(sniper_arm_path);
+                    }
+                    cmd.arg("--");
+                }
+                "steamrt4" => {
+                    cmd.arg(
+                        PATH_STEAM.join(
+                            "steam/steamapps/common/SteamLinuxRuntime_4/_v2-entry-point",
+                        ),
+                    );
+                    cmd.arg("--");
+                }
+                _ => {}
+            };
+        }
+
+
+        cmd.arg(&path_exec);
+
+        for arg in h.args.split_whitespace() {
+            let processed_arg = match arg {
+                "$PROFILE" => &instance.profname,
+                "$WIDTH" => &width.to_string(),
+                "$HEIGHT" => &height.to_string(),
+                "$RESOLUTION" => &format!("{}x{}", width, height),
+                "$INSTANCECOUNT" => &plan.instances.len().to_string(),
+                "$INSTANCENUM" => &i.to_string(),
+                "$GAMEDIR" => &gamedir.os_fmt(win),
+                "$HANDLERDIR" => &h.path_handler.os_fmt(win),
+                _ => &String::from(arg).sanitize_path(),
+            };
+            cmd.arg(processed_arg);
+        }
+    }
+
+    Ok((cmds, ready_pipes))
+}
+
+
+
+
+
+
+
+
+
+
+
+use std::ffi::OsStr;
+
+/// A valid bash variable name: [A-Za-z_][A-Za-z0-9_]*
+fn is_valid_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
+        && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+/// Serialize a `Command` into a bash-compatible command line.
+fn command_to_bash(cmd: &Command) -> Result<String, String> {
+    let mut assignments: Vec<String> = Vec::new();
+    let mut removals: Vec<String> = Vec::new();
+
+    for (key, value) in cmd.get_envs() {
+        let name = key.to_string_lossy().into_owned();
+        if !is_valid_env_name(&name) {
+            return Err(format!("invalid environment variable name: {name:?}"));
+        }
+        match value {
+            Some(v) => assignments.push(format!("{}={}", name, shell_words::quote(&v.to_string_lossy()))),
+            // `None` means the variable was removed with `env_remove`.
+            None => removals.push(name),
+        }
+    }
+
+    let mut words: Vec<String> = Vec::new();
+
+    // Removals need the `env` utility, since bash has no inline "unset for this command" prefix.
+    words.push("env".to_string());
+
+    if let Some(dir) = cmd.get_current_dir() {
+        words.push("-C".to_string());
+        words.push(shell_words::quote(&dir.to_string_lossy()).to_string());
+    }
+    
+    for name in removals {
+        words.push("-u".to_string());
+        words.push(name);
+    }
+
+    words.extend(assignments);
+    words.push(shell_words::quote(&cmd.get_program().to_string_lossy()).to_string());
+    words.extend(cmd.get_args().map(|f| shell_words::quote(&f.to_string_lossy()).to_string()));
+
+    let line = words.join(" ");
+
+    // Wrap in a subshell so the `cd` does not leak into the calling shell.
+    Ok(line)
+}
+
+
+
+pub fn launch_game_data(inst: &mut Instance, now: Instant) -> Result<(), String> {
+    // TODO SPAWN GAMESCOPE PROC
+
+    let Some(ref mut launch_data) = inst.launch_data else {
+        return Ok(());
+    };
+
+    let mut input_state = launch_data.input_handler.lock().unwrap();
+    let mut used_dev_paths = Vec::new();
+    for dev in &mut inst.devices {
+        dev.set_grabbed(&mut input_state, true);
+
+        let mut dev_is_kbm = false;
+        
+        for real_dev in input_state.devices_ordered() {
+            if real_dev.1.device_id == Some(dev.device_id) {
+                if let Some(path) = real_dev.0.clone().file_name().and_then(|fname| fname.to_str()).map(|fname| String::from(fname)) {
+                    used_dev_paths.push(path);
+                }
+
+                dev_is_kbm = match real_dev.1.device_type() {
+                    crate::input::DeviceType::Gamepad => false,
+                    crate::input::DeviceType::Keyboard => true,
+                    crate::input::DeviceType::Mouse => true,
+                    crate::input::DeviceType::Other => false,
+                };
+
+                break;
+            }
+        }
+        let input_events_clone = launch_data.input_events.clone();
+        let ctx = launch_data.ctx.clone();
+        let viewport_id = launch_data.viewport_id.clone();
+        if dev_is_kbm {
+            dev.set_input_callback(&mut input_state, Some(Box::new(move |input_events| {
+                // println!("Held device pressed: {:#?}", input_events);
+                input_events_clone.lock().unwrap().extend(input_events.iter().map(|f| InstanceInputEvt::InputEvt(f.clone())));
+                // ui
+                ctx.request_repaint_once_for(viewport_id);
+            })));
+        }
+    }
+
+    let (ready_read, ready_write) = nix::unistd::pipe().map_err(|e| format!("Pipe creation error: {e}"))?;
+    
+    let mut cmd = Command::new("gamescope");
+    cmd.args(["-R", &format!("/proc/self/fd/{}", ready_write.as_raw_fd())]);
+    
+    cmd.args(["--composite-cursor", "--force-windows-fullscreen", "--nested-follow-window-scale", "1"]);
+    cmd.args(["-W", &launch_data.starting_position.w.to_string(), "-w", &launch_data.starting_position.w.to_string()]);
+    cmd.args(["-H", &launch_data.starting_position.h.to_string(), "-h", &launch_data.starting_position.h.to_string()]);
+    cmd.args(["--backend", "headless"]);
+    cmd.args(["--"]);
+    // cmd.args(["--", "konsole"]);
+
+
+    let h = launch_data.handler;
+
+    // cmd.args()
+    for arg in shell_words::split(&h.args).map_err(|a| a.to_string())? {
+        let processed_arg = match &arg as &str {
+            "$PROFILE" => &inst.profname,
+            "$WIDTH" => &launch_data.starting_position.w.to_string(),
+            "$HEIGHT" => &launch_data.starting_position.h.to_string(),
+            "$RESOLUTION" => &format!("{}x{}", launch_data.starting_position.w, launch_data.starting_position.h),
+            // "$INSTANCECOUNT" => &plan.instances.len().to_string(), // TODO
+            // "$INSTANCENUM" => &i.to_string(), // TODO
+            "$INSTANCEID" => &inst.id.0.to_string(),
+            "$GAMEDIR" => &gamedir.os_fmt(win),
+            "$HANDLERDIR" => &h.path_handler.os_fmt(win),
+            _ => &String::from(arg),
+        };
+        cmd.arg(processed_arg);
+    }
+    
+
+
+
+    println!("Spawning game command: {:?}", command_to_bash(&cmd));
+
+    
+    let child_rmt = RemoteNamespace::new(NamespaceSetup{
+        cmd,
+        input_devs: used_dev_paths
+    }).map_err(|e| format!("{e:?}"))?;
+
+    for dev in &mut inst.devices {
+        let input_events_clone = launch_data.input_events.clone();
+        let ctx = launch_data.ctx.clone();
+        let viewport_id = launch_data.viewport_id.clone();
+
+        dev.set_dev_change_callback(&mut input_state, Some(Box::new(move |dev_path, is_addition| {
+            println!("Dev changed on held device: {:#?} - {:#?}", dev_path, is_addition);
+            if let Some(path) = dev_path.file_name().and_then(|fname| fname.to_str()).map(|fname| String::from(fname)) {
+                input_events_clone.lock().unwrap().push(
+                    if is_addition {
+                        InstanceInputEvt::AddDev(path)
+                    } else {
+                        InstanceInputEvt::RemoveDev(path)
+                    }
+                );
+                ctx.request_repaint_once_for(viewport_id);
+            };
+        })));
+    }
+
+    launch_data.gamescope_proc = Some((child_rmt, ready_read, now+Duration::from_secs(5)));
+
+    Ok(())
+}
+
+
 
 const SDL_GAMECONTROLLER_IGNORE_DEVICES: &str = "0x054c/0x0df2,0x054c/0x0df2,0x045e/0x02e3,0x045e/0x0b00,0x045e/0x0b05,0x2dc8/0x6000,0x2dc8/0x6100,0x2dc8/0x6001,0x2dc8/0x6101,0x2dc8/0x6003,0x2dc8/0x6006,0x2dc8/0x6009,0x2dc8/0x6012,0x28de/0x1002,0x28de/0x1003,0x28de/0x1071,0x28de/0x1052,0x28de/0x1042,0x28de/0x1203,0x28de/0x1204,0x28de/0x1205,0x28de/0x1206,0x28de/0x1302,0x28de/0x1303,0x28de/0x1304,0x28de/0x1305,0x0f0d/0x01ab,0x0f0d/0x0196,0x28de/0x12ff,0x28de/0x12fe,0x28de/0x12fd,0x28de/0x12fc,0x28de/0x12fb,0x28de/0x12fa,0x28de/0x12f9,0x28de/0x12f8,0x28de/0x12f7,0x28de/0x12f6,0x28de/0x12f5,0x28de/0x12f4,0x28de/0x12f3,0x28de/0x12f2,0x28de/0x12f1,0x28de/0x12f0,0x0079/0x181a,0x044f/0xb315,0x044f/0xd007,0x046d/0xcad1,0x054c/0x0268,0x056e/0x200f,0x056e/0x2013,0x05b8/0x1004,0x05b8/0x1006,0x06a3/0xf622,0x0738/0x3180,0x0738/0x3250,0x0738/0x3481,0x0738/0x8180,0x0738/0x8838,0x0810/0x0001,0x0810/0x0003,0x0925/0x0005,0x0925/0x8866,0x0925/0x8888,0x0e6f/0x0109,0x0e6f/0x011e,0x0e6f/0x0128,0x0e6f/0x0214,0x0e6f/0x1314,0x0e6f/0x6302,0x0e8f/0x0008,0x0e8f/0x3075,0x0e8f/0x310d,0x0f0d/0x0009,0x0f0d/0x004d,0x0f0d/0x005f,0x0f0d/0x006a,0x0f0d/0x006e,0x0f0d/0x0085,0x0f0d/0x0086,0x0f0d/0x0088,0x0f30/0x1100,0x11ff/0x3331,0x1345/0x1000,0x1345/0x6005,0x146b/0x5500,0x1a34/0x0836,0x20bc/0x5500,0x20d6/0x576d,0x20d6/0xca6d,0x2563/0x0523,0x2563/0x0575,0x25f0/0x83c3,0x25f0/0xc121,0x2c22/0x2003,0x2c22/0x2302,0x2c22/0x2502,0x8380/0x0003,0x8888/0x0308,0x0079/0x181b,0x044f/0xd00e,0x054c/0x05c4,0x054c/0x05c5,0x054c/0x09cc,0x054c/0x0ba0,0x0738/0x8250,0x0738/0x8384,0x0738/0x8480,0x0738/0x8481,0x0c12/0x0e10,0x0c12/0x0e13,0x0c12/0x0e15,0x0c12/0x0e20,0x0c12/0x0ef6,0x0c12/0x1cf6,0x0c12/0x1e10,0x0c12/0x2e18,0x0e6f/0x0203,0x0e6f/0x0207,0x0e6f/0x020a,0x0f0d/0x0055,0x0f0d/0x005e,0x0f0d/0x0066,0x0f0d/0x0084,0x0f0d/0x0087,0x0f0d/0x008a,0x0f0d/0x009c,0x0f0d/0x00a0,0x0f0d/0x00ee,0x0f0d/0x011c,0x0f0d/0x0123,0x0f0d/0x0162,0x11c0/0x4001,0x146b/0x0d01,0x146b/0x0d02,0x146b/0x0d06,0x146b/0x0d08,0x146b/0x0d09,0x146b/0x0d10,0x146b/0x0d10,0x146b/0x0d13,0x146b/0x1103,0x1532/0x0401,0x1532/0x1000,0x1532/0x1004,0x1532/0x1007,0x1532/0x1008,0x1532/0x1009,0x1532/0x100a,0x1532/0x1100,0x20d6/0x792a,0x2c22/0x2000,0x2c22/0x2300,0x2c22/0x2500,0x3285/0x0d16,0x3285/0x0d17,0x7545/0x0104,0x9886/0x0025,0x054c/0x0ce6,0x054c/0x0df2,0x054c/0x0e5f,0x0e6f/0x0209,0x0f0d/0x0163,0x0f0d/0x0184,0x1532/0x100b,0x1532/0x100c,0x1532/0x1012,0x3285/0x0d18,0x3285/0x0d19,0x358a/0x0104,0x0079/0x18d4,0x03eb/0xff02,0x044f/0xb326,0x045e/0x028e,0x045e/0x028f,0x045e/0x0291,0x045e/0x02a0,0x045e/0x02a1,0x045e/0x02a9,0x045e/0x0719,0x046d/0xc21d,0x046d/0xc21e,0x046d/0xc21f,0x046d/0xc242,0x056e/0x2004,0x0738/0x4716,0x0738/0x4718,0x0738/0x4726,0x0738/0x4728,0x0738/0x4736,0x0738/0x4738,0x0738/0x4740,0x0738/0xb726,0x0738/0xbeef,0x0738/0xcb02,0x0738/0xcb03,0x0738/0xf738,0x0955/0x7210,0x0955/0xb400,0x0b05/0x1b4c,0x0e6f/0x0105,0x0e6f/0x0113,0x0e6f/0x011f,0x0e6f/0x0125,0x0e6f/0x0127,0x0e6f/0x0131,0x0e6f/0x0133,0x0e6f/0x0143,0x0e6f/0x0147,0x0e6f/0x0201,0x0e6f/0x0213,0x0e6f/0x021f,0x0e6f/0x0301,0x0e6f/0x0313,0x0e6f/0x0314,0x0e6f/0x0401,0x0e6f/0x0413,0x0e6f/0x0501,0x0e6f/0xf900,0x0f0d/0x000a,0x0f0d/0x000c,0x0f0d/0x000d,0x0f0d/0x0016,0x0f0d/0x001b,0x0f0d/0x008c,0x0f0d/0x00db,0x0f0d/0x011e,0x1038/0x1430,0x1038/0x1431,0x1038/0xb360,0x11c9/0x55f0,0x12ab/0x0004,0x12ab/0x0301,0x12ab/0x0303,0x1430/0x02a0,0x1430/0x4748,0x1430/0xf801,0x146b/0x0601,0x15e4/0x3f00,0x15e4/0x3f0a,0x15e4/0x3f10,0x162e/0xbeef,0x1689/0xfd00,0x1689/0xfd01,0x1689/0xfe00,0x1949/0x041a,0x1bad/0x0002,0x1bad/0x0003,0x1bad/0xf016,0x1bad/0xf018,0x1bad/0xf019,0x1bad/0xf021,0x1bad/0xf023,0x1bad/0xf025,0x1bad/0xf027,0x1bad/0xf028,0x1bad/0xf02e,0x1bad/0xf036,0x1bad/0xf038,0x1bad/0xf039,0x1bad/0xf03a,0x1bad/0xf03d,0x1bad/0xf03e,0x1bad/0xf03f,0x1bad/0xf042,0x1bad/0xf080,0x1bad/0xf501,0x1bad/0xf502,0x1bad/0xf503,0x1bad/0xf504,0x1bad/0xf505,0x1bad/0xf506,0x1bad/0xf900,0x1bad/0xf901,0x1bad/0xf902,0x1bad/0xf903,0x1bad/0xf904,0x1bad/0xf906,0x1bad/0xfa01,0x1bad/0xfd00,0x1bad/0xfd01,0x24c6/0x5000,0x24c6/0x5300,0x24c6/0x5303,0x24c6/0x530a,0x24c6/0x531a,0x24c6/0x5397,0x24c6/0x5500,0x24c6/0x5501,0x24c6/0x5502,0x24c6/0x5503,0x24c6/0x5506,0x24c6/0x550d,0x24c6/0x550e,0x24c6/0x5508,0x24c6/0x5510,0x24c6/0x5b00,0x24c6/0x5b02,0x24c6/0x5b03,0x24c6/0x5d04,0x24c6/0xfafa,0x24c6/0xfafb,0x24c6/0xfafc,0x24c6/0xfafd,0x24c6/0xfafe,0x03f0/0x0495,0x044f/0xd012,0x045e/0x02d1,0x045e/0x02dd,0x045e/0x02e0,0x045e/0x02e3,0x045e/0x02ea,0x045e/0x02fd,0x045e/0x02ff,0x045e/0x0b00,0x045e/0x0b05,0x045e/0x0b0a,0x045e/0x0b0c,0x045e/0x0b12,0x045e/0x0b13,0x045e/0x0b20,0x045e/0x0b21,0x045e/0x0b22,0x0738/0x4a01,0x0e6f/0x0139,0x0e6f/0x013b,0x0e6f/0x013a,0x0e6f/0x0145,0x0e6f/0x0146,0x0e6f/0x015b,0x0e6f/0x015c,0x0e6f/0x015d,0x0e6f/0x015f,0x0e6f/0x0160,0x0e6f/0x0161,0x0e6f/0x0162,0x0e6f/0x0163,0x0e6f/0x0164,0x0e6f/0x0165,0x0e6f/0x0166,0x0e6f/0x0167,0x0e6f/0x0205,0x0e6f/0x0206,0x0e6f/0x0246,0x0e6f/0x0261,0x0e6f/0x0262,0x0e6f/0x02a0,0x0e6f/0x02a1,0x0e6f/0x02a2,0x0e6f/0x02a3,0x0e6f/0x02a4,0x0e6f/0x02a5,0x0e6f/0x02a6,0x0e6f/0x02a7,0x0e6f/0x02a8,0x0e6f/0x02a9,0x0e6f/0x02aa,0x0e6f/0x02ab,0x0e6f/0x02ac,0x0e6f/0x02ad,0x0e6f/0x02ae,0x0e6f/0x02af,0x0e6f/0x02b0,0x0e6f/0x02b1,0x0e6f/0x02b3,0x0e6f/0x02b5,0x0e6f/0x02b6,0x0e6f/0x02bd,0x0e6f/0x02be,0x0e6f/0x02bf,0x0e6f/0x02c0,0x0e6f/0x02c1,0x0e6f/0x02c2,0x0e6f/0x02c3,0x0e6f/0x02c4,0x0e6f/0x02c5,0x0e6f/0x02c6,0x0e6f/0x02c7,0x0e6f/0x02c8,0x0e6f/0x02c9,0x0e6f/0x02ca,0x0e6f/0x02cb,0x0e6f/0x02cd,0x0e6f/0x02ce,0x0e6f/0x02cf,0x0e6f/0x02d5,0x0e6f/0x0346,0x0e6f/0x0446,0x0e6f/0x02da,0x0e6f/0x02d6,0x0e6f/0x02d9,0x0f0d/0x0063,0x0f0d/0x0067,0x0f0d/0x0078,0x0f0d/0x00c5,0x0f0d/0x0150,0x10f5/0x7009,0x10f5/0x7013,0x1532/0x0a00,0x1532/0x0a03,0x1532/0x0a14,0x1532/0x0a15,0x20d6/0x2001,0x20d6/0x2002,0x20d6/0x2003,0x20d6/0x2004,0x20d6/0x2005,0x20d6/0x2006,0x20d6/0x2009,0x20d6/0x200a,0x20d6/0x200b,0x20d6/0x200c,0x20d6/0x200d,0x20d6/0x200e,0x20d6/0x200f,0x20d6/0x2011,0x20d6/0x2012,0x20d6/0x2015,0x20d6/0x2016,0x20d6/0x2017,0x20d6/0x2018,0x20d6/0x2019,0x20d6/0x201a,0x20d6/0x4001,0x20d6/0x4002,0x20d6/0x890b,0x24c6/0x541a,0x24c6/0x542a,0x24c6/0x543a,0x24c6/0x551a,0x24c6/0x561a,0x24c6/0x581a,0x24c6/0x591a,0x24c6/0x592a,0x24c6/0x791a,0x2dc8/0x2002,0x2dc8/0x3106,0x2e24/0x0652,0x2e24/0x1618,0x2e24/0x1688,0x146b/0x0611,0x0000/0x0000,0x045e/0x02a2,0x0e6f/0x1414,0x0e6f/0x0159,0x24c6/0xfaff,0x0f0d/0x006d,0x0f0d/0x00a4,0x0079/0x1832,0x0079/0x187f,0x0079/0x1883,0x03eb/0xff01,0x0c12/0x0ef8,0x046d/0x1000,0x11ff/0x0511,0x1345/0x6006,0x056e/0x2012,0x146b/0x0602,0x0f0d/0x00ae,0x046d/0x0401,0x046d/0x0301,0x046d/0xcaa3,0x046d/0xc261,0x046d/0x0291,0x0079/0x18d3,0x0f0d/0x00b1,0x0001/0x0001,0x0079/0x188e,0x0079/0x187c,0x0079/0x189c,0x0079/0x1874,0x2f24/0x0050,0x2f24/0x002e,0x2f24/0x0091,0x1430/0x0719,0x0f0d/0x00ed,0x0f0d/0x00c0,0x0e6f/0x0152,0x046d/0x1007,0x0e6f/0x02b8,0x0079/0x18a1,0x0000/0x6686,0x12ab/0x0304,0x1430/0x0291,0x1430/0x02a9,0x1430/0x070b,0x1bad/0x028e,0x1bad/0x02a0,0x1bad/0x5500,0x20ab/0x55ef,0x24c6/0x5509,0x2516/0x0069,0x25b1/0x0360,0x2c22/0x2203,0x2f24/0x0011,0x2f24/0x0053,0x2f24/0x00b7,0x046d/0x0000,0x046d/0x1004,0x046d/0x1008,0x046d/0xf301,0x0738/0x02a0,0x0738/0x7263,0x0738/0xb738,0x0738/0xcb29,0x0738/0xf401,0x0079/0x18c2,0x0079/0x18c8,0x0079/0x18cf,0x0c12/0x0e17,0x0c12/0x0e1c,0x0c12/0x0e22,0x0c12/0x0e30,0xd2d2/0xd2d2,0x0d62/0x9a1a,0x0d62/0x9a1b,0x0e00/0x0e00,0x0e6f/0x012a,0x0e6f/0x02b2,0x0f0d/0x0097,0x0f0d/0x00ba,0x0f0d/0x00d8,0x0fff/0x02a1,0x045e/0x0867,0x16d0/0x0f3f,0x2f24/0x008f,0x0e6f/0xf501,0x057e/0x2006,0x057e/0x2067,0x057e/0x2007,0x057e/0x2066,0x057e/0x2008,0x057e/0x2068,0x057e/0x2009,0x057e/0x2069,0x0f0d/0x00c1,0x0f0d/0x0092,0x0f0d/0x00f6,0x0e6f/0x0180,0x0e6f/0x0181,0x0e6f/0x0184,0x0e6f/0x0185,0x0e6f/0x0186,0x0e6f/0x0187,0x0e6f/0x0188,0x0e6f/0x018c,0x0f0d/0x00aa,0x20d6/0xa711,0x20d6/0xa712,0x20d6/0xa713,0x20d6/0xa714,0x20d6/0xa715,0x20d6/0xa716,0x20d6/0xa718,0x33dd/0x0001,0x33dd/0x0002,0x33dd/0x0003,0x0f0d/0x00f0,0x0000/0x11fb,0x28de/0x1101,0x28de/0x1102,0x28de/0x1105,0x28de/0x1106,0x28de/0x1142,0x28de/0x1201,0x28de/0x1202,0x28de/0x1205,0x28de/0x1302,0x28de/0x1303,0x28de/0x1304,0x2dc8/0x9000,0x2dc8/0x3810,0x2dc8/0x0651,0x2dc8/0x9020,0x2dc8/0x9015,0x2dc8/0x2865,0x1235/0xab12,0x2002/0x9000,0x2dc8/0x9001,0x3820/0x0009,0x2dc8/0x3820,0x2dc8/0x2000,0x2dc8/0x2000,0x2810/0x0009,0x2dc8/0x2830,0x2dc8/0x6002,0x2dc8/0x6102,0x1235/0xab20,0x2820/0x0009,0x2dc8/0x301b,0x2dc8/0x3011,0x2dc8/0x3013,0x2dc8/0x9018,0x2dc8/0x3230,0x05a0/0x3232,0x05a0/0x3232,0x2dc8/0x3100,0x2dc8/0x9012,0x2dc8/0x2862,0x0b05/0x4500,0x0b05/0x4500,0x0b05/0x7905,0x0b05/0x7906,0x0010/0x0082,0x1949/0x0402,0x1949/0x0419,0x0171/0x0419,0x0079/0x1830,0x3250/0x1001,0x3250/0x1001,0x3250/0x1002,0x3250/0x1002,0x24c6/0x891b,0x0c12/0x0ef7,0x04b4/0x010a,0xffff/0xffff,0x20e8/0x5860,0x0926/0x8888,0x0e6f/0x0130,0x0079/0x0011,0x1a34/0xf705,0x1949/0x0402,0x3537/0x1097,0x05ac/0x061a,0x25f0/0x83c1,0x18d1/0x9400,0x18d1/0x9400,0x0428/0x4001,0x0e8f/0x1006,0x0e8f/0x0012,0x0f0d/0x0010,0x0f0d/0x0022,0x0f0d/0x006b,0xdead/0xbeef,0x14d8/0x6208,0x0e8f/0x3013,0x04d8/0x0082,0x05fd/0x3000,0x1949/0x0402,0x056e/0x2003,0x0f30/0x0110,0x22ba/0x1020,0x046d/0xc219,0x046d/0xc216,0x046d/0xc216,0x046d/0xc219,0x046d/0xc218,0x046d/0xc211,0x24c6/0x892b,0x24c6/0x892a,0x24c6/0x891a,0x0738/0x5266,0x0738/0x3384,0x0738/0x3480,0x0738/0x8818,0x0078/0x0006,0x045e/0x000e,0x045e/0x0285,0x045e/0x0289,0x045e/0x0289,0x20d6/0x0dad,0x146b/0x0c01,0x0810/0xe501,0x0955/0x7214,0x0955/0x7214,0x124b/0x4d01,0x1345/0x3008,0x0079/0x1843,0x0079/0x1844,0x057e/0x2019,0x057e/0x2019,0x057e/0x201e,0x057e/0x2017,0x057e/0x2017,0x057e/0x2017,0x057e/0x0306,0x057e/0x0330,0x057e/0x0306,0x050d/0x0803,0x2836/0x0001,0x2836/0x0001,0x045e/0x0202,0x11ff/0x3341,0x0e8f/0x0003,0x054c/0x0cda,0x0f30/0x1112,0x2c22/0x2012,0x2c22/0x2010,0x1532/0x0402,0x1532/0x0705,0x1532/0x0900,0x1532/0x0900,0xf000/0x0003,0x0079/0x0011,0x1a34/0x0809,0x7545/0x1122,0x06a3/0xf623,0x06a3/0xff0c,0x06a3/0x040c,0x06a3/0x0109,0x06a3/0x040b,0x06a3/0xf518,0x16c0/0x0487,0x28de/0x11fc,0x0111/0x1431,0x0111/0x1419,0x6666/0x8804,0xf000/0x00f1,0x044f/0xb320,0x044f/0xb323,0x044f/0xb300,0x044f/0xd009,0x044f/0xd008,0x12bd/0xd015,0x14d8/0xcd07,0x0079/0x0011,0x05ac/0x3232,0x0c45/0x4320,0x2717/0x3144,0x16c0/0x05e1,0x6666/0x0667,0x0583/0x2060,0x07b5/0x0315,0x289b/0x0080,0x289b/0x0003,0x289b/0x0060,";

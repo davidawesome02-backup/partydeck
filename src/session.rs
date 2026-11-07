@@ -2,22 +2,23 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
 use std::os::fd::{AsRawFd, OwnedFd};
-use std::process::Command;
 use std::sync::{Arc, RwLock, Mutex};
 
-use bytes::Bytes;
 use eframe::egui::{self, Color32};
 use evdev::InputEvent;
 
+use crate::app::PartyConfig;
+use crate::handler::Handler;
 use crate::input::{DeviceRefrence, InputStateInner};
+use crate::launch::launch_game_data;
 use crate::layout::{Layout, WindowPosition};
 use crate::monitor::Monitor;
 use crate::profiles::next_temp_name;
-use crate::unshare::{NamespaceSetup, RemoteNamespace};
+use crate::unshare::{RemoteNamespace};
 use crate::util::next_instance_color;
 use crate::video::egl::EglApi;
 use crate::video::gamescope::{GamescopeWaylandState, InstanceStreamView};
-use crate::video::pipewire::{DmaBufFrame, PipewireCommand, PipewireID, PipewireInstance, PipewireStream};
+use crate::video::pipewire::{PipewireCommand, PipewireID, PipewireInstance, PipewireStream};
 use pipewire as pw;
 
 use std::time::{Duration, Instant};
@@ -41,6 +42,9 @@ pub enum InstanceInputEvt {
 pub struct InstanceId(pub u64);
 
 pub struct InstanceLaunched {
+    pub handler: Handler,
+    pub party_conf: PartyConfig,
+
     pub last_error_dont_retry: Option<InstanceLaunchedStatus>,
 
     pub start_instant: Instant, // Time to wait for to start gamescope. (any time past this we are running)
@@ -89,7 +93,8 @@ impl std::fmt::Display for InstanceLaunchedStatus {
 }
 
 pub struct InstanceSpecificHandler {
-    pub pause_between_starts: Option<f64>
+    // pub pause_between_starts: Option<f64>
+    // I dont remember why I added this.
 }
 
 pub struct Instance {
@@ -97,7 +102,7 @@ pub struct Instance {
     pub devices: Vec<DeviceRefrence>,
     pub profname: String,
     pub color: Color32,
-    pub handler: InstanceSpecificHandler,
+    pub inst_handler_settings: InstanceSpecificHandler,
 
     pub launch_data: Option<InstanceLaunched>
 }
@@ -178,12 +183,18 @@ impl Instance {
         action
     }
 
-    pub fn start_instance(&mut self, next_timeout: &mut Instant, upper_launch_data: &DisplayLaunched, position: WindowPosition, input_handler: Arc<Mutex<InputStateInner>>) {
+    pub fn start_instance(&mut self, next_timeout: &mut Instant, upper_launch_data: &DisplayLaunched, position: WindowPosition, input_handler: Arc<Mutex<InputStateInner>>, handler: Handler, party_conf: PartyConfig) {
         if self.launch_data.is_some() {return;}
 
-        // self.devices.iter_mut().for_each(|d| d.set_grabbed(state, true));
+
+        if let Some(delay) = handler.pause_between_starts {
+            *next_timeout += Duration::from_secs_f64(delay);
+        }
 
         self.launch_data = Some(InstanceLaunched {
+            handler,
+            party_conf,
+
             last_error_dont_retry: None,
             start_instant: next_timeout.clone(),
             gamescope_proc: None,
@@ -202,11 +213,9 @@ impl Instance {
             input_events: Arc::new(Mutex::new(Vec::new())),
 
             preview_frame: None,
+
         });
 
-        if let Some(delay) = self.handler.pause_between_starts {
-            *next_timeout+=Duration::from_secs_f64(delay);
-        }
     }
 
     pub fn running_ui(&mut self, ui: &mut egui::Ui, tile_rect: egui::Rect) {
@@ -271,12 +280,10 @@ impl Instance {
         let Some(ref mut launch_proc) = launch_data.gamescope_proc else {return InstanceLaunchedStatus::Failed;};
 
         if !matches!(launch_proc.0.child_pidfd.try_wait(), Ok(None)) {
-            // launch_data.
 
             launch_data.last_error_dont_retry = Some(InstanceLaunchedStatus::Exited);
             
             if let Ok(mut input_handler) = launch_data.input_handler.lock() {
-                // input_handler
                 for ele in &mut self.devices {
                     ele.set_grabbed(&mut input_handler, false);
                 }
@@ -394,87 +401,7 @@ impl Instance {
     }
 
     pub fn launch_game(&mut self, now: Instant) -> Result<(), String> {
-        // TODO SPAWN GAMESCOPE PROC
-
-        let Some(ref mut launch_data) = self.launch_data else {
-            return Ok(());
-        };
-
-        let mut input_state = launch_data.input_handler.lock().unwrap();
-        // input_handler.targets.iter().filter(|f| f).next();
-        let mut used_dev_paths = Vec::new();
-        for dev in &mut self.devices {
-            dev.set_grabbed(&mut input_state, true);
-
-            let mut dev_is_kbm = false;
-            
-            for real_dev in input_state.devices_ordered() {
-                if real_dev.1.device_id == Some(dev.device_id) {
-                    if let Some(path) = real_dev.0.clone().file_name().and_then(|fname| fname.to_str()).map(|fname| String::from(fname)) {
-                        used_dev_paths.push(path);
-                    }
-
-                    dev_is_kbm = match real_dev.1.device_type() {
-                        crate::input::DeviceType::Gamepad => false,
-                        crate::input::DeviceType::Keyboard => true,
-                        crate::input::DeviceType::Mouse => true,
-                        crate::input::DeviceType::Other => false,
-                    };
-
-                    break;
-                }
-            }
-            let input_events_clone = launch_data.input_events.clone();
-            let ctx = launch_data.ctx.clone();
-            let viewport_id = launch_data.viewport_id.clone();
-            if dev_is_kbm {
-                dev.set_input_callback(&mut input_state, Some(Box::new(move |input_events| {
-                    // println!("Held device pressed: {:#?}", input_events);
-                    input_events_clone.lock().unwrap().extend(input_events.iter().map(|f| InstanceInputEvt::InputEvt(f.clone())));
-                    // ui
-                    ctx.request_repaint_once_for(viewport_id);
-                })));
-            }
-        }
-
-        let (ready_read, ready_write) = nix::unistd::pipe().map_err(|e| format!("Pipe creation error: {e}"))?;
-        let mut cmd = Command::new("gamescope");
-        cmd.args(["-R", &format!("/proc/self/fd/{}", ready_write.as_raw_fd())]);
-        cmd.args(["--composite-cursor", "--force-windows-fullscreen", "--nested-follow-window-scale", "1"]);
-        cmd.args(["-W", &launch_data.starting_position.w.to_string(), "-w", &launch_data.starting_position.w.to_string()]);
-        cmd.args(["-H", &launch_data.starting_position.h.to_string(), "-h", &launch_data.starting_position.h.to_string()]);
-        cmd.args(["--backend", "headless"]);
-        cmd.args(["--", "konsole"]);
-
-        
-        let child_rmt = RemoteNamespace::new(NamespaceSetup{
-            cmd,
-            input_devs: used_dev_paths
-        }).map_err(|e| format!("{e:?}"))?;
-
-        for dev in &mut self.devices {
-            let input_events_clone = launch_data.input_events.clone();
-            let ctx = launch_data.ctx.clone();
-            let viewport_id = launch_data.viewport_id.clone();
-
-            dev.set_dev_change_callback(&mut input_state, Some(Box::new(move |dev_path, is_addition| {
-                println!("Dev changed on held device: {:#?} - {:#?}", dev_path, is_addition);
-                if let Some(path) = dev_path.file_name().and_then(|fname| fname.to_str()).map(|fname| String::from(fname)) {
-                    input_events_clone.lock().unwrap().push(
-                        if is_addition {
-                            InstanceInputEvt::AddDev(path)
-                        } else {
-                            InstanceInputEvt::RemoveDev(path)
-                        }
-                    );
-                    ctx.request_repaint_once_for(viewport_id);
-                };
-            })));
-        }
-
-        launch_data.gamescope_proc = Some((child_rmt, ready_read, now+Duration::from_secs(5)));
-
-        Ok(())
+        launch_game_data(self, now)
     }
 
     pub fn is_alive_or_starting(&mut self) -> bool {
@@ -549,7 +476,17 @@ impl Display {
         action
     }
 
-    pub fn start_display(&mut self, ui: &mut egui::Ui, next_timeout: &mut Instant, viewport_id: egui::ViewportId, egl: Arc<EglApi>, pw: &PipewireInstance, mon: Monitor, input_handler: Arc<Mutex<InputStateInner>>) {
+    pub fn start_display(
+        &mut self, ui: &mut egui::Ui, 
+        next_timeout: &mut Instant, 
+        viewport_id: egui::ViewportId, 
+        egl: Arc<EglApi>, 
+        pw: &PipewireInstance, 
+        mon: Monitor, 
+        input_handler: Arc<Mutex<InputStateInner>>,
+        handler: Handler,
+        party_conf: PartyConfig,
+    ) {
         let new_launch_data = DisplayLaunched {
             egl: egl,
             pw_sender: pw.channel.clone(),
@@ -560,7 +497,14 @@ impl Display {
 
         let layout = self.window_positions(mon.width(), mon.height());
 
-        self.instances.iter_mut().zip(layout).for_each(|(inst, position)| inst.start_instance(next_timeout, &new_launch_data, position, input_handler.clone()));
+        self.instances.iter_mut().zip(layout).for_each(|(inst, position)| inst.start_instance(
+            next_timeout, 
+            &new_launch_data, 
+            position, 
+            input_handler.clone(),
+            handler.clone(),
+            party_conf.clone(),
+        ));
 
         self.launch_data = Some(new_launch_data);
 
@@ -650,7 +594,7 @@ impl Session {
             devices: Vec::new(),
             profname,
             color,
-            handler: InstanceSpecificHandler{pause_between_starts:Some(1.0)},
+            inst_handler_settings: InstanceSpecificHandler{},
             launch_data: None,
         });
         id
