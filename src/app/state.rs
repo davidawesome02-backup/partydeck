@@ -8,7 +8,6 @@ use super::screens::Route;
 use super::events::AppEventSender;
 use super::toasts::Toasts;
 use crate::handler::{Handler, scan_handlers};
-use crate::launch::LaunchPlan;
 use crate::monitor::{Monitor, get_monitors_errorless};
 use crate::remote::websocket;
 use crate::session::{Session};
@@ -30,7 +29,6 @@ pub struct AppState {
 
     pub events: AppEventSender,
     pub toasts: Toasts,
-    pub active_session: Option<Arc<LaunchPlan>>,
 
     pub egl: Arc<EglApi>,
     pub pipewire: Option<PipewireInstance>,
@@ -113,7 +111,6 @@ impl AppState {
             mode,
             events,
             toasts,
-            active_session: None,
             egl,
             pipewire,
             input_state,
@@ -123,7 +120,7 @@ impl AppState {
     }
 
     pub fn can_launch(&self) -> bool {
-        self.session.can_launch() && self.active_session.is_none()
+        self.session.can_launch()
     }
 
     pub fn rescan_monitors(&mut self) {

@@ -149,7 +149,7 @@ impl Drop for RpcSocket {
 pub struct NamespaceSetup {
     pub cmd: Command,
     pub input_devs: Vec<String>,
-
+    pub bind_mounts: Vec<(PathBuf, PathBuf)>,
 }
 
 #[allow(unused)]
@@ -441,6 +441,17 @@ fn enter_new_namespace(setup: &NamespaceSetup) -> anyhow::Result<()> {
         None::<&OsStr>,
     ).context("Failed to mount tmpfs on /newroot/tmp/.X11-unix")?;
 
+
+
+    for (bind_old, bind_new) in &setup.bind_mounts {
+        mount(
+            Some(&PathBuf::from("/oldroot/").join(bind_old)),
+            &PathBuf::from("/newroot/").join(bind_new),
+            NONE_STR,
+            MsFlags::MS_BIND | MsFlags::MS_REC | MsFlags::MS_SILENT,
+            None::<&OsStr>,
+        ).context("Failed to bind mount by-id")?;
+    }
 
 
     // TODO: mount overlayfs.
